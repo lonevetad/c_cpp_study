@@ -1,9 +1,9 @@
 # `std::map` Test Suite — Summary
 
-> **Standard:** C++17  
+> **Standard:** C++26  
 > **Output:** `test_map_output.txt` (written to the working directory at run time)  
-> **Build:** `g++ -std=c++17 -Wall -Wextra -o test_map test_map.cpp`  
-> _(run the executable from `TESTS/` so the output file lands in the same folder)_
+> **Build:** `g++ -std=c++26 -Wall -Wextra -o test_map test_map.cpp`  
+> _(run the executable from `src/t_map_struct_memory/` so the output file lands in the same folder)_
 
 ---
 

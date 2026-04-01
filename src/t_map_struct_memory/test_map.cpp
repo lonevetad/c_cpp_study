@@ -18,9 +18,11 @@
  *     4-space-indented JSON-like object via map_printer.h.
  *
  * Output is written to "test_map_output.txt" in the current working directory
- * (run the executable from the TESTS/ folder to keep everything together).
+ * (run the executable from the src/t_map_struct_memory/ folder to keep
+ * everything together).
  *
- * Requires C++17 (structured bindings, if-constexpr, std::string_view).
+ * Requires C++26 (backward-compatible with C++17; uses structured bindings,
+ * std::tuple deduction, raw string literals).
  */
 
 #include <cstdint>
@@ -584,8 +586,8 @@ int main() {
     std::ofstream out(output_path);
     if (!out.is_open()) {
         std::cerr << "ERROR: cannot open '" << output_path
-                  << "' for writing. Run the executable from the TESTS/ "
-                     "directory.\n";
+                  << "' for writing. Run the executable from the "
+                     "src/t_map_struct_memory/ directory.\n";
         return 1;
     }
 

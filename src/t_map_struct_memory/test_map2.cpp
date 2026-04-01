@@ -22,9 +22,10 @@
  *   5. Point2*                    (heap struct, manual delete)  ← NEW
  *
  * Output is written to "test_map2_output.txt" in the current working
- * directory (run the executable from the TESTS/ folder).
+ * directory (run the executable from the src/t_map_struct_memory/ folder).
  *
- * Requires C++17 (structured bindings, std::tuple deduction).
+ * Requires C++26 (backward-compatible with C++17; uses structured bindings,
+ * std::tuple deduction, raw string literals).
  */
 
 #include <cstdint>
@@ -766,8 +767,8 @@ int main() {
     std::ofstream out(output_path);
     if (!out.is_open()) {
         std::cerr << "ERROR: cannot open '" << output_path
-                  << "' for writing. Run the executable from the TESTS/ "
-                     "directory.\n";
+                  << "' for writing. Run the executable from the "
+                     "src/t_map_struct_memory/ directory.\n";
         return 1;
     }
 

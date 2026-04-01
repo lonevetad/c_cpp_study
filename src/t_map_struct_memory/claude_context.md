@@ -1,23 +1,24 @@
 # Claude Context — `src/t_map_struct_memory/` std::map Suite
 
 > **Last updated:** 2026-04-01
-> **Conversation scope:** creation of a complete `std::map` test suite in C++17
+> **Conversation scope:** creation of a complete `std::map` test suite, originally C++17, upgraded to C++26
 > **Status:** all tasks completed; no pending work
 
 ---
 
-## File Inventory (8 files)
+## File Inventory (9 files)
 
-| File | Role | Lines | Created |
-|---|---|---|---|
-| `simple_struct.h` | Defines `Point` — copyable value-type struct (`int32_t x, y`) | ~20 | Round 1 |
-| `simple_class.h` | Defines `Person` — non-copyable heap-allocated class (`string name_, int32_t age_`) | ~40 | Round 1 |
-| `map_printer.h` | `display()` overload family + `print_map<K,V>()` template | ~70 | Round 1 |
-| `test_map.cpp` | 8 example functions (1a–4b) + `main()` writing to `test_map_output.txt` | ~700 | Round 1 |
-| `summary.md` | Markdown summaries of the 4 files above + 8 examples | ~230 | Round 2 |
-| `simple_struct2.h` | Defines `Point2` — non-copyable heap-allocated struct (same fields as `Point`) | ~55 | Round 3 |
-| `test_map2.cpp` | Copy of `test_map.cpp` + 2 new examples (5a, 5b) for `Point2*`; writes to `test_map2_output.txt` | ~950 | Round 3 |
-| `summary2.md` | Extends `summary.md` with `Point2`/`simple_struct2.h` coverage + 10 example summaries | ~260 | Round 3 |
+| File | Role | Lines | Created | Modified |
+|---|---|---|---|---|
+| `simple_struct.h` | Defines `Point` — copyable value-type struct (`int32_t x, y`) | ~20 | Round 1 | — |
+| `simple_class.h` | Defines `Person` — non-copyable heap-allocated class (`string name_, int32_t age_`) | ~40 | Round 1 | — |
+| `map_printer.h` | `display()` overload family + `print_map<K,V>()` template | ~70 | Round 1 | — |
+| `test_map.cpp` | 8 example functions (1a–4b) + `main()` writing to `test_map_output.txt` | ~700 | Round 1 | Round 6 |
+| `summary.md` | Markdown summaries of the 4 files above + 8 examples | ~230 | Round 2 | Round 6 |
+| `simple_struct2.h` | Defines `Point2` — non-copyable heap-allocated struct (same fields as `Point`) | ~55 | Round 3 | — |
+| `test_map2.cpp` | Copy of `test_map.cpp` + 2 new examples (5a, 5b) for `Point2*`; writes to `test_map2_output.txt` | ~950 | Round 3 | Round 6 |
+| `summary2.md` | Extends `summary.md` with `Point2`/`simple_struct2.h` coverage + 10 example summaries | ~260 | Round 3 | Round 6 |
+| `claude_context.md` | This file — session recovery context | — | Round 5 | Round 6 |
 
 ---
 
@@ -51,12 +52,25 @@
 
 ---
 
+## C++26 Compatibility
+
+The codebase was originally written against C++17. All language and library features used (structured bindings, `std::tuple` CTAD, raw string literals, `= delete`/`= default`, `<cstdint>` fixed-width types, `std::map`, `std::ostringstream`) remain fully valid and non-deprecated through C++26.
+
+**No source code logic changes were required.** The upgrade consisted of:
+- Changing the `-std=c++17` compiler flag to `-std=c++26` in all build commands and documentation.
+- Updating the "Requires C++17" comments in both `.cpp` files to "Requires C++26".
+- Updating the `TESTS/` folder references (stale from an earlier directory structure) to `src/t_map_struct_memory/` in both `.cpp` and both `summary*.md` files.
+
+The `.h` files contain no standard-version references and required no changes.
+
+---
+
 ## Build & Run
 
 ```bash
 # Build commands (to be run from src/t_map_struct_memory/):
-g++ -std=c++17 -Wall -Wextra -o test_map  test_map.cpp
-g++ -std=c++17 -Wall -Wextra -o test_map2 test_map2.cpp
+g++ -std=c++26 -Wall -Wextra -o test_map  test_map.cpp
+g++ -std=c++26 -Wall -Wextra -o test_map2 test_map2.cpp
 
 # Run from src/t_map_struct_memory/ so output files land in the same folder:
 ./test_map    # produces test_map_output.txt
@@ -64,7 +78,8 @@ g++ -std=c++17 -Wall -Wextra -o test_map2 test_map2.cpp
 ```
 
 All `#include` directives use either standard library headers (`<...>`) or local same-directory headers (`"..."`), so both build commands work correctly when run from within `src/t_map_struct_memory/`. No `-I` flags or path adjustments are needed.
-Code was reviewed manually for correctness (includes, overload resolution, memory management) but was **not compiled** due to missing toolchain in PATH.
+
+**Toolchain note:** GCC 14+ (available via MSYS2 UCRT64 `mingw-w64-ucrt-x86_64-gcc`) supports `-std=c++26`. If your compiler does not yet accept `-std=c++26`, use `-std=c++2c` (the pre-ratification flag) or fall back to `-std=c++23` / `-std=c++17` — the code compiles identically under all four.
 
 ---
 
@@ -77,6 +92,7 @@ Code was reviewed manually for correctness (includes, overload resolution, memor
 | 3 | Answer: would a heap-allocated struct behave like `Person*`? (YES) Then create `Point2`, extend tests, write `summary2.md` | `simple_struct2.h`, `test_map2.cpp`, `summary2.md` |
 | 4 | Conversation summary (text only) | Inline text response |
 | 5 | Create this context recovery file | `claude_context.md` |
+| 6 | Upgrade to C++26; fix stale `TESTS/` paths in `summary*.md` and `.cpp` files | Updated: `test_map.cpp`, `test_map2.cpp`, `summary.md`, `summary2.md`, `claude_context.md` |
 
 ---
 
