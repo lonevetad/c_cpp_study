@@ -1,0 +1,3 @@
+prendere i contenuti di "expr_eval.cpp" (enum, structs, estensioni di std::formatter, helper functions, etc), spacchettarli, trasformarli in classi se necessario, e poi ricucire, soprattutto convertendo gli switch in effettivo uso della logica OOP.
+Seguendo gli standard, ovviamente
+ 
