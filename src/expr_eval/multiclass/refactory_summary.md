@@ -39,6 +39,9 @@ separation of concerns. The original file was **not modified**.
 ```
 multiclass/
 ├── main.cpp
+├── Makefile
+├── test/
+│   └── test_expr_eval.cpp          self-contained unit tests (no external framework)
 ├── include/
 │   └── expr_eval/
 │       ├── config.hpp                      compile-time constants + char lookup table
@@ -83,7 +86,14 @@ multiclass/
     └── ExpressionEvaluator.cpp
 ```
 
-**Compilation command:**
+**Build commands (via Makefile):**
+```bash
+make          # compile demo  → build/expr_eval_multi.exe
+make test     # compile + run → build/expr_eval_test.exe
+make clean    # remove build/
+```
+
+**Manual compilation (without make):**
 ```bash
 g++ -std=c++26 -Wall -Wextra -I include/ \
   src/types/Value.cpp \
@@ -94,6 +104,54 @@ g++ -std=c++26 -Wall -Wextra -I include/ \
   src/parser/Parser.cpp \
   src/ExpressionEvaluator.cpp \
   main.cpp -o expr_eval_multi
+```
+
+---
+
+## Quick Start — step-by-step commands
+
+Open a terminal (MSYS2 UCRT64 shell) in the `multiclass/` directory, then run each
+command in order.  Every command redirects both stdout and stderr (`2>&1`) to a text
+file so you can inspect the output later with any editor.
+
+> **Note:** the `make` executable on this machine is `mingw32-make`.  
+> Substitute `make` if yours is on PATH.
+
+```bash
+# 1. Compile the demo program (main.cpp + all library sources).
+#    Compiler messages go to build_log.txt.
+mingw32-make all > build_log.txt 2>&1
+
+# 2. Compile the test executable (reuses the .o files from step 1).
+#    Appended to the same build_log.txt so all compilation output is together.
+mingw32-make build/expr_eval_test.exe >> build_log.txt 2>&1
+
+# 3. Run the unit tests.
+#    PASS/FAIL lines and the final summary go to test_output.txt.
+./build/expr_eval_test.exe > test_output.txt 2>&1
+
+# 4. Run the demo (main.cpp).
+#    Parsed tree and "Good job!" / "Uhm, please retry!" go to main_output.txt.
+./build/expr_eval_multi.exe > main_output.txt 2>&1
+```
+
+After running, you have three log files:
+
+| File | Contents |
+|---|---|
+| `build_log.txt` | Compiler invocations (or errors if something is wrong) |
+| `test_output.txt` | 75 PASS/FAIL lines + summary line |
+| `main_output.txt` | Parsed AST trees for e1–e7 + "Good job!" |
+
+To rebuild from scratch (clean slate):
+
+```bash
+# Remove all generated files, then redo steps 1–4.
+mingw32-make clean > build_log.txt 2>&1
+mingw32-make all  >> build_log.txt 2>&1
+mingw32-make build/expr_eval_test.exe >> build_log.txt 2>&1
+./build/expr_eval_test.exe  > test_output.txt 2>&1
+./build/expr_eval_multi.exe > main_output.txt 2>&1
 ```
 
 ---
@@ -164,6 +222,46 @@ The original `main` never evaluated (returned `true` always). When real evaluati
 in, `m["v2"] = "-10"` caused `v2 > 3` to be false, making `e5` and `e6` evaluate to false
 (contradicting the test expectations). The value was changed to `"5"` so the intent of the
 developer (that `v1 > 10 && v2 > 3` can be true) is reflected correctly.
+
+---
+
+---
+
+## Build System (`Makefile`)
+
+`Makefile` sits at `multiclass/` root. Key design points:
+
+- **`BUILD_DIR := build/`** — all artefacts (`.o`, `.d`, `.exe`) go under `build/`; source tree stays clean.
+- **Incremental builds** — `-MMD -MP` generates a `.d` dependency file alongside each `.o`; Make `-include`s them so header changes trigger the correct recompiles.
+- **Shared library objects** — `LIB_OBJS` is compiled once and linked into both `expr_eval_multi.exe` and `expr_eval_test.exe`.
+- **Pattern rule** — `$(BUILD_DIR)/%.o: %.cpp` with `@mkdir -p $(dir $@)` creates output directories on demand; no manual `mkdir` calls elsewhere.
+- **`make test`** — builds the test executable then runs it; Make propagates a non-zero exit code as a build failure.
+- **`make clean`** — `rm -rf build/` removes everything generated.
+
+---
+
+## Test Suite (`test/test_expr_eval.cpp`)
+
+No external test framework — a minimal `check()` helper + two macros (`EXPECT_TRUE`, `EXPECT_FALSE`, `EXPECT_THROW`) keep the file self-contained.
+
+`eval()` wrapper redirects `std::cout` to a sink during `ExprEval::evaluate()` calls so that parse-tree output does not obscure PASS/FAIL lines; exceptions are re-thrown correctly.
+
+| Section | What is tested |
+|---|---|
+| Literals | `"true"` / `"false"` at root |
+| Variable lookup | Variable resolves to bool via `Value::fromString` |
+| Equality `== / !=` | Numbers, booleans, heterogeneous types |
+| Numeric comparisons | All four operators, boundary values, negative numbers |
+| Logical AND | Truth table + false short-circuit (RHS skipped) |
+| Logical OR | Truth table + true short-circuit (RHS skipped) |
+| NOT / double-NOT | `!`, `!!`, `!!!`; double-NOT optimization verified |
+| NEGATE / double-NEGATE | `-`, `--` collapse; sign of result verified |
+| Parentheses | Single and nested; `ExprNode` collapse is transparent |
+| Complex | All six expressions from `main.cpp` (e1–e7) |
+| `ParseError` | Empty string, unclosed paren, trailing operators, bare `!`/`-` |
+| `EvaluationError` | Bare number at root, unknown variable, non-literal variable, type mismatches in `>`, `&&`, `-` |
+
+**Short-circuit tests** confirm that `false && <unknown>` and `true || <unknown>` return the correct value without throwing, proving the short-circuit implementation skips RHS evaluation.
 
 ---
 
