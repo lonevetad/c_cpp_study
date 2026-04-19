@@ -268,3 +268,76 @@ importing typing machinery in production code.
 
 **ctypes** wins precisely because it operates at the OS DLL level rather than
 the Python C extension level — the compiler ABI does not matter.
+
+---
+
+## 11. Cross-platform Makefile design
+
+The Makefile must produce a `.dll` on Windows and a `.so` on Linux from the
+same source files.  The key differences between the two platforms:
+
+| Aspect | Windows (MSYS2) | Linux |
+|---|---|---|
+| Shared library suffix | `.dll` | `.so` |
+| Position-independent code | not needed (PE format) | `-fPIC` mandatory |
+| GCC runtime dep | `libwinpthread-1.dll` (must be copied) | glibc (system-provided) |
+| Make binary | `mingw32-make` | `make` |
+| Python interpreter | auto-detected: `which python` → `which python3` | auto-detected: `which python3` → `which python` |
+
+### Platform detection
+
+GNU Make sets `$(OS)` to `Windows_NT` on all Windows hosts (including MSYS2
+and Cygwin).  On Linux and macOS it is unset.  This is the idiomatic detection:
+
+```makefile
+ifeq ($(OS),Windows_NT)
+    LIB_SUFFIX := .dll
+    ...
+else
+    LIB_SUFFIX := .so
+    CXXFLAGS   += -fPIC
+    ...
+endif
+```
+
+### Why `-fPIC` on Linux only
+
+Position-independent code (PIC) means the shared library's text segment can
+be loaded at any virtual address.  On Linux/ELF, this is **required** for
+`.so` files — without it the dynamic linker may crash.  On Windows/PE, the
+format handles relocation differently; `-fPIC` is unnecessary and slightly
+slower (it adds an indirection layer for every global access).
+
+### Why GCC runtime embedding differs
+
+On Windows, `libstdc++` internally references `libwinpthread-1.dll` even
+when `-static-libstdc++` is used.  No linker flag eliminates this; the DLL
+must be distributed alongside the main DLL.  `os.add_dll_directory()` in
+`__init__.py` ensures Python finds it.
+
+On Linux, `libstdc++` and `libgcc` can be fully embedded with
+`-static-libgcc -static-libstdc++`.  The only runtime dependency remaining
+is glibc (`libc.so.6`), which is always present on any Linux system.  No
+extra file copy is needed.
+
+### COPY_RUNTIME / CLEAN_RUNTIME variables
+
+The `all` and `clean` targets need different actions per platform.  Using
+Make-level conditional variables avoids duplicating the entire target:
+
+```makefile
+ifeq ($(OS),Windows_NT)
+    COPY_RUNTIME  = cp -f "$(WINPTHREAD_SRC)" "$(WINPTHREAD_DST)" \
+                    && echo "Copied runtime: $(WINPTHREAD_DST)"
+    CLEAN_RUNTIME = rm -f "$(WINPTHREAD_DST)"
+else
+    COPY_RUNTIME  = :
+    CLEAN_RUNTIME = :
+endif
+
+all: $(LIB)
+    @$(COPY_RUNTIME)
+```
+
+`:` is the POSIX shell no-op built-in.  `@$(COPY_RUNTIME)` silences Make's
+command echo; on Linux the shell receives only `:` and does nothing.

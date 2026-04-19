@@ -35,9 +35,10 @@ _suffix = (
 _lib_path = pathlib.Path(__file__).parent / f"_expr_eval_core{_suffix}"
 
 if not _lib_path.exists():
+    _make_cmd = "mingw32-make" if sys.platform == "win32" else "make"
     raise ImportError(
         f"Native library not found: {_lib_path}\n"
-        "Run  mingw32-make all  from the expr_eval_py/ directory to build it."
+        f"Run  {_make_cmd} all  from the expr_eval_py/ directory to build it."
     )
 
 # On Windows, register the package directory as a DLL search path so that

@@ -38,16 +38,32 @@ src/expr_eval_py/
 ## How to build and use
 
 ```bash
-# 1. Build the DLL (from this directory)
+# ── Windows (MSYS2 bash) ──────────────────────────────────────────────────────
+# 1. Build the DLL
 mingw32-make all
 
 # 2. Run the tests
 mingw32-make test
 # or directly:
-/c/python314/python.exe -m pytest tests/ -v
+python -m pytest tests/ -v
 
-# 3. Use from Python (run from this directory, or install with pip)
-/c/python314/python.exe -c "
+# 3. Use from Python
+python -c "
+from expr_eval_py import evaluate
+print(evaluate('v > 10 && flag', {'v': '15', 'flag': 'true'}))
+"
+
+# ── Linux (bash) ──────────────────────────────────────────────────────────────
+# 1. Build the .so
+make all
+
+# 2. Run the tests
+make test
+# or directly:
+python3 -m pytest tests/ -v
+
+# 3. Use from Python
+python3 -c "
 from expr_eval_py import evaluate
 print(evaluate('v > 10 && flag', {'v': '15', 'flag': 'true'}))
 "

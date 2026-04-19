@@ -3,22 +3,47 @@
 # Targets:  all    build the shared library + copy runtime deps (default)
 #           test   run pytest unit tests
 #           clean  remove generated files
+#
+# Supports: Windows 11 (MSYS2 UCRT64)  and  Linux (Mint / Ubuntu, GCC ≥ 15)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── Compiler & flags ──────────────────────────────────────────────────────────
+# ── Compiler & base flags ─────────────────────────────────────────────────────
 CXX      := g++
 CXXFLAGS := -std=c++26 -O2 -Wall -Wextra
 
-# -shared           : produce a shared library (.dll on Windows)
-# -static-libgcc    : embed libgcc — no external libgcc_s*.dll needed
-# -static-libstdc++ : embed libstdc++ — no external libstdc++-6.dll needed
-# libwinpthread-1.dll cannot be fully eliminated because libstdc++ references
-# it internally; we copy it alongside the DLL instead (see 'all' target).
-LDFLAGS  := -shared -static-libgcc -static-libstdc++
+# ── Platform detection ────────────────────────────────────────────────────────
+# $(OS) == 'Windows_NT' on all Windows hosts (MSYS2, Cygwin, native shell);
+# unset or empty on Linux / macOS.
+ifeq ($(OS),Windows_NT)
+    # Windows: produce a DLL; embed GCC runtime statically.
+    # libwinpthread-1.dll cannot be embedded (libstdc++ references it internally);
+    # copy it next to the DLL so Python finds it via os.add_dll_directory().
+    LIB_SUFFIX    := .dll
+    LDFLAGS       := -shared -static-libgcc -static-libstdc++
+    WINPTHREAD_SRC := /c/msys64/ucrt64/bin/libwinpthread-1.dll
+    WINPTHREAD_DST := expr_eval_py/libwinpthread-1.dll
+    COPY_RUNTIME   = cp -f "$(WINPTHREAD_SRC)" "$(WINPTHREAD_DST)" \
+                     && echo "Copied runtime: $(WINPTHREAD_DST)"
+    CLEAN_RUNTIME  = rm -f "$(WINPTHREAD_DST)"
+    PYTHON        := $(shell py -c "import sys; print(sys.executable)")
+    # $(shell where.exe python 2>/dev/null || where.exe python3 2>/dev/null)
+else
+    # Linux: produce a .so; -fPIC is mandatory for position-independent shared libs.
+    # -static-libgcc / -static-libstdc++ embed the GCC runtime so the .so is
+    # portable across distros without requiring a matching libstdc++ version.
+    LIB_SUFFIX    := .so
+    CXXFLAGS      += -fPIC
+    LDFLAGS       := -shared -static-libgcc -static-libstdc++
+    COPY_RUNTIME   = :
+    CLEAN_RUNTIME  = :
+    PYTHON        := $(shell which python 2>/dev/null || which python3 2>/dev/null)
+endif
+ifeq ($(PYTHON),)
+    $(error Python not found on PATH. Install Python and ensure 'python' or 'python3' is accessible.)
+endif
 
 # ── Path to the C++ library (sibling directory) ───────────────────────────────
 EXPR_EVAL_ROOT := ../expr_eval/multiclass
-
 INC := -I $(EXPR_EVAL_ROOT)/include
 
 # ── C++ library source files (same set as multiclass/Makefile) ───────────────
@@ -34,30 +59,18 @@ LIB_SRCS := \
     $(EXPR_EVAL_ROOT)/src/parser/Parser.cpp             \
     $(EXPR_EVAL_ROOT)/src/ExpressionEvaluator.cpp
 
-# ── Output: DLL lands inside the Python package directory ────────────────────
-# __init__.py loads it via: pathlib.Path(__file__).parent / "_expr_eval_core.dll"
-DLL := expr_eval_py/_expr_eval_core.dll
-
-# ── MSYS2 runtime dependency that libstdc++ drags in ─────────────────────────
-# Copied into the package dir so Windows finds it when loading the main DLL.
-WINPTHREAD_SRC := /c/msys64/ucrt64/bin/libwinpthread-1.dll
-WINPTHREAD_DST := expr_eval_py/libwinpthread-1.dll
-
-# ── Python interpreter ────────────────────────────────────────────────────────
-PYTHON := /c/python314/python.exe
+# ── Output: shared library lands inside the Python package directory ──────────
+# __init__.py detects the correct suffix at import time via sys.platform.
+LIB := expr_eval_py/_expr_eval_core$(LIB_SUFFIX)
 
 # ─────────────────────────────────────────────────────────────────────────────
 
 .PHONY: all test clean
 
-# Build the DLL and copy the winpthread runtime next to it.
-# __init__.py calls os.add_dll_directory(package_dir) before ctypes.CDLL so
-# Windows finds libwinpthread-1.dll automatically.
-all: $(DLL)
-	cp -f "$(WINPTHREAD_SRC)" "$(WINPTHREAD_DST)"
-	@echo "Copied runtime: $(WINPTHREAD_DST)"
+all: $(LIB)
+	@$(COPY_RUNTIME)
 
-$(DLL): bridge/bridge.cpp $(LIB_SRCS)
+$(LIB): bridge/bridge.cpp $(LIB_SRCS)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(INC) $^ -o $@
 	@echo "Built: $@"
 
@@ -65,6 +78,7 @@ $(DLL): bridge/bridge.cpp $(LIB_SRCS)
 test: all
 	$(PYTHON) -m pytest tests/ -v
 
-# Remove DLL and copied runtime.
+# Remove the shared library and (on Windows) the copied runtime.
 clean:
-	rm -f $(DLL) $(WINPTHREAD_DST)
+	rm -f $(LIB)
+	@$(CLEAN_RUNTIME)

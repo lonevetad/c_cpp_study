@@ -11,25 +11,36 @@ Full design rationale: `refactory_summary.md` (same directory).
 
 ## Environment
 
-- Compiler: GCC 15.2.0 (MSYS2 UCRT64, Windows 11)
+### Windows 11 (MSYS2 UCRT64)
+- Compiler: GCC 15.2.0 (MSYS2 UCRT64)
 - Standard: C++26
-- Make: `mingw32-make` (`make` is not on PATH; use `mingw32-make` in shell commands)
+- Make: `mingw32-make` (`make` is not on PATH in MSYS2 — always use `mingw32-make`)
 - Shell: MSYS2 bash (Unix paths, forward slashes)
+
+### Linux (Mint / Ubuntu)
+- Compiler: GCC **≥ 15** required for `-std=c++26`; on Ubuntu 24.04 install via `sudo add-apt-repository ppa:ubuntu-toolchain-r/test && sudo apt install g++-15`
+- Make: `make`
+- Shell: bash
 
 ---
 
 ## Build
 
 ```bash
-# From multiclass/ directory:
+# Windows (MSYS2 bash) — from multiclass/ directory:
 mingw32-make all             # → build/expr_eval_multi.exe  (demo)
 mingw32-make test            # → build/expr_eval_test.exe   (compile + run)
-mingw32-make build/expr_eval_test.exe   # compile test only, don't run
 mingw32-make clean           # rm -rf build/
+
+# Linux — from multiclass/ directory:
+make all                     # → build/expr_eval_multi  (demo)
+make test                    # → build/expr_eval_test   (compile + run)
+make clean                   # rm -rf build/
 ```
 
-All `.o`, `.d`, `.exe` go under `build/`; source tree is never written to.
+All `.o`, `.d`, and executable files go under `build/`; source tree is never written to.
 `-MMD -MP` generates `.d` dependency files → headers tracked automatically.
+Executables have `.exe` extension on Windows; no extension on Linux.
 
 ---
 
