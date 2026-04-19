@@ -1,0 +1,534 @@
+std::map test suite (extended)
+===============================
+Ten examples: 5 value types x 2 key types (int32_t, std::string).
+Examples 1-4 are identical to test_map.cpp.
+Examples 5a/5b add Point2* (heap-allocated struct) to demonstrate
+that struct vs. class is irrelevant to map ownership semantics:
+what matters is BY VALUE (inline, RAII) vs. BY POINTER (heap,
+manual delete).
+Map states are printed as 4-space-indented JSON-like objects.
+
+======================================================================
+  Example 1a: std::map<int32_t, int32_t>
+======================================================================
+
+[MEMORY MODEL]
+  Stack : The 'map' variable itself is a small fixed-size object (~48 B on
+          most 64-bit implementations). It lives on the caller's stack frame
+          and holds: a pointer to the root tree node, the element count, the
+          comparator, and the allocator state.
+  Heap  : Every call to insert()/emplace()/operator[] causes std::allocator
+          to allocate one red-black tree node on the heap. Each node contains
+          the key (int32_t, 4 B) and the value (int32_t, 4 B) stored inline —
+          there is no extra indirection or secondary allocation.
+  RAII  : When the map goes out of scope its destructor walks the entire tree
+          and deallocates every node. The caller needs to do nothing.
+
+  -- Insertions --
+  [ADD]    key=3  value=300  => 1 heap node allocated (key + value inline)
+  [ADD]    key=1  value=100  => 1 heap node allocated (key + value inline)
+  [ADD]    key=5  value=500  => 1 heap node allocated (key + value inline)
+  [ADD]    key=2  value=200  => 1 heap node allocated (key + value inline)
+  [ADD]    key=4  value=400  => 1 heap node allocated (key + value inline)
+
+[MAP STATE — ordered by key]
+{
+    1: 100,
+    2: 200,
+    3: 300,
+    4: 400,
+    5: 500
+}
+
+  -- Removals --
+  [REMOVE] key=5  (stored value=500)  => heap node deallocated by std::allocator
+  [REMOVE] key=2  (stored value=200)  => heap node deallocated by std::allocator
+
+[MAP STATE — after removals]
+{
+    1: 100,
+    3: 300,
+    4: 400
+}
+
+[MEMORY] 'map' leaves scope => remaining 3 node(s) freed automatically by the destructor.
+
+======================================================================
+  Example 1b: std::map<std::string, int32_t>
+======================================================================
+
+[MEMORY MODEL]
+  Stack : Same as 1a — the map object lives on the caller's stack.
+  Heap  : Each tree node stores a std::string key. std::string uses Small
+          String Optimisation (SSO): keys up to ~15 chars are stored inside
+          the string object itself (no extra heap allocation); longer keys
+          trigger an additional heap allocation for the character buffer.
+          The int32_t value is stored inline in the node — no extra pointer.
+  RAII  : The map destructor calls ~std::string() for every key (freeing any
+          SSO-overflow heap buffers) and then frees each node. Zero manual
+          cleanup is required.
+
+  -- Insertions --
+  [ADD]    key="delta"  value=40
+  [ADD]    key="alpha"  value=10
+  [ADD]    key="echo"  value=50
+  [ADD]    key="beta"  value=20
+  [ADD]    key="gamma"  value=30
+
+[MAP STATE — ordered lexicographically]
+{
+    "alpha": 10,
+    "beta": 20,
+    "delta": 40,
+    "echo": 50,
+    "gamma": 30
+}
+
+  -- Removals --
+  [REMOVE] key="echo"  (stored value=50)
+  [REMOVE] key="alpha"  (stored value=10)
+
+[MAP STATE — after removals]
+{
+    "beta": 20,
+    "delta": 40,
+    "gamma": 30
+}
+
+[MEMORY] 'map' leaves scope => all key strings and nodes freed automatically.
+
+======================================================================
+  Example 2a: std::map<int32_t, std::string*>  [dynamically allocated string values]
+======================================================================
+
+[MEMORY MODEL]
+  Stack : The map object lives on the caller's stack.
+  Heap  : Two separate heap allocations per entry:
+            (1) The tree node (via std::allocator) — stores the int32_t key
+                and a raw pointer (std::string*, 8 B on 64-bit systems).
+            (2) The std::string object created with 'new std::string(...)'.
+                The pointer stored in the node points to this object.
+  !!! RAII DOES NOT COVER THE POINTEE !!!
+          The map destructor frees tree nodes but does NOT follow raw pointers.
+          If you erase a node without first deleting the pointed-to string you
+          get a memory leak. The pointer stored in the node is overwritten —
+          the string's heap block is silently lost.
+  Rule  : Always 'delete' the std::string* AFTER (or before) calling erase().
+          Best practice for production code: replace std::string* with
+          std::unique_ptr<std::string> to automate the cleanup.
+
+  -- Insertions --
+  [ADD]    key=10  value=new std::string("ten")  @0x172b12ce9f0  => 2 heap allocations (node + std::string)
+  [ADD]    key=30  value=new std::string("thirty")  @0x172b12cee40  => 2 heap allocations (node + std::string)
+  [ADD]    key=20  value=new std::string("twenty")  @0x172b12ce960  => 2 heap allocations (node + std::string)
+  [ADD]    key=40  value=new std::string("forty")  @0x172b12ceb10  => 2 heap allocations (node + std::string)
+  [ADD]    key=50  value=new std::string("fifty")  @0x172b12cea50  => 2 heap allocations (node + std::string)
+
+[MAP STATE]
+{
+    10: 0x172b12ce9f0,
+    20: 0x172b12ce960,
+    30: 0x172b12cee40,
+    40: 0x172b12ceb10,
+    50: 0x172b12cea50
+}
+
+  -- Removals --
+  [REMOVE] key=30  value="thirty"  @0x172b12cee40
+           Step 1 — erase map iterator  => node freed by std::allocator
+           Step 2 — delete std::string* => string heap block freed
+  [REMOVE] key=10  value="ten"  @0x172b12ce9f0
+           Step 1 — erase map iterator  => node freed by std::allocator
+           Step 2 — delete std::string* => string heap block freed
+
+[MAP STATE — after removals]
+{
+    20: 0x172b12ce960,
+    40: 0x172b12ceb10,
+    50: 0x172b12cea50
+}
+[MEMORY] Manually cleaning up the remaining 3 string pointer(s) before 'map' goes out of scope:
+  delete std::string* @0x172b12ce960  ("twenty")
+  delete std::string* @0x172b12ceb10  ("forty")
+  delete std::string* @0x172b12cea50  ("fifty")
+  'map' leaves scope => remaining nodes freed automatically.
+
+======================================================================
+  Example 2b: std::map<std::string, std::string*>  [dynamically allocated string values]
+======================================================================
+
+[MEMORY MODEL]
+  Stack : The map object lives on the caller's stack.
+  Heap  : Up to three distinct heap allocations per entry:
+            (1) The tree node (std::allocator).
+            (2) The key std::string's internal character buffer, if the key
+                string is longer than the SSO threshold (~15 chars).
+            (3) The value std::string object created with 'new std::string'.
+  !!! SAME OWNERSHIP CAVEAT AS EXAMPLE 2a !!!
+          The map destructor frees nodes and key strings (via ~std::string)
+          but does NOT follow value pointers. You must delete every value
+          std::string* explicitly before (or after) erasing the corresponding
+          entry, or before the map is destroyed.
+
+  -- Insertions --
+  [ADD]    key="color"  value=new std::string("blue")  @0x172b12ced80
+  [ADD]    key="shape"  value=new std::string("circle")  @0x172b12cec00
+  [ADD]    key="weight"  value=new std::string("heavy")  @0x172b12ceb10
+  [ADD]    key="size"  value=new std::string("large")  @0x172b12cea50
+  [ADD]    key="speed"  value=new std::string("fast")  @0x172b12ceb40
+
+[MAP STATE]
+{
+    "color": 0x172b12ced80,
+    "shape": 0x172b12cec00,
+    "size": 0x172b12cea50,
+    "speed": 0x172b12ceb40,
+    "weight": 0x172b12ceb10
+}
+
+  -- Removals --
+  [REMOVE] key="shape"  value="circle"  @0x172b12cec00
+           Step 1 — erase map iterator  => node + key string freed
+           Step 2 — delete std::string* => value string freed
+  [REMOVE] key="color"  value="blue"  @0x172b12ced80
+           Step 1 — erase map iterator  => node + key string freed
+           Step 2 — delete std::string* => value string freed
+
+[MAP STATE — after removals]
+{
+    "size": 0x172b12cea50,
+    "speed": 0x172b12ceb40,
+    "weight": 0x172b12ceb10
+}
+[MEMORY] Manually cleaning up the remaining 3 string pointer(s):
+  delete std::string* @0x172b12cea50  ("large")
+  delete std::string* @0x172b12ceb40  ("fast")
+  delete std::string* @0x172b12ceb10  ("heavy")
+  'map' leaves scope => nodes and key strings freed automatically.
+
+======================================================================
+  Example 3a: std::map<int32_t, Point>  [struct by value]
+======================================================================
+
+[MEMORY MODEL]
+  Stack : The map object lives on the caller's stack.
+  Heap  : One heap allocation per entry: the tree node. The Point value
+          (two int32_t members = 8 B) is stored inline inside the node —
+          no extra pointer or secondary allocation. This keeps every
+          key-value pair contiguous in a single heap block per node, which
+          is more cache-friendly than a pointer-based approach.
+  RAII  : The map destructor calls ~Point() for each stored value.  Point's
+          destructor is trivial (compiler-generated, empty body), so the cost
+          at erasure time is just the node deallocation. No manual cleanup.
+
+  -- Insertions --
+  [ADD]    key=3  value={ x: 30, y: 31 }  => 1 node allocated; Point stored inline (no extra heap)
+  [ADD]    key=1  value={ x: 10, y: 11 }  => 1 node allocated; Point stored inline (no extra heap)
+  [ADD]    key=5  value={ x: 50, y: 51 }  => 1 node allocated; Point stored inline (no extra heap)
+  [ADD]    key=2  value={ x: 20, y: 21 }  => 1 node allocated; Point stored inline (no extra heap)
+  [ADD]    key=4  value={ x: 40, y: 41 }  => 1 node allocated; Point stored inline (no extra heap)
+
+[MAP STATE]
+{
+    1: { x: 10, y: 11 },
+    2: { x: 20, y: 21 },
+    3: { x: 30, y: 31 },
+    4: { x: 40, y: 41 },
+    5: { x: 50, y: 51 }
+}
+
+  -- Removals --
+  [REMOVE] key=3  value={ x: 30, y: 31 }  => ~Point() called (trivial), node freed
+  [REMOVE] key=5  value={ x: 50, y: 51 }  => ~Point() called (trivial), node freed
+
+[MAP STATE — after removals]
+{
+    1: { x: 10, y: 11 },
+    2: { x: 20, y: 21 },
+    4: { x: 40, y: 41 }
+}
+
+[MEMORY] 'map' leaves scope => remaining 3 node(s) freed by destructor (trivial ~Point() per node).
+
+======================================================================
+  Example 3b: std::map<std::string, Point>  [struct by value]
+======================================================================
+
+[MEMORY MODEL]
+  Stack : The map object lives on the caller's stack.
+  Heap  : One node per entry. The node holds:
+            - The std::string key (possibly with its own internal heap buffer
+              when the key length exceeds the SSO threshold).
+            - The Point value inline (8 B, no extra pointer).
+          ~std::string() cleans up the key's heap buffer if one exists.
+          ~Point() is trivial. Both are invoked by the map destructor.
+  RAII  : No manual cleanup is required for either keys or values.
+
+  -- Insertions --
+  [ADD]    key="origin"  value={ x: 0, y: 0 }
+  [ADD]    key="top_left"  value={ x: 0, y: 100 }
+  [ADD]    key="top_right"  value={ x: 100, y: 100 }
+  [ADD]    key="bot_left"  value={ x: 0, y: 0 }
+  [ADD]    key="bot_right"  value={ x: 100, y: 0 }
+
+[MAP STATE — ordered lexicographically]
+{
+    "bot_left": { x: 0, y: 0 },
+    "bot_right": { x: 100, y: 0 },
+    "origin": { x: 0, y: 0 },
+    "top_left": { x: 0, y: 100 },
+    "top_right": { x: 100, y: 100 }
+}
+
+  -- Removals --
+  [REMOVE] key="origin"  value={ x: 0, y: 0 }
+  [REMOVE] key="top_right"  value={ x: 100, y: 100 }
+
+[MAP STATE — after removals]
+{
+    "bot_left": { x: 0, y: 0 },
+    "bot_right": { x: 100, y: 0 },
+    "top_left": { x: 0, y: 100 }
+}
+
+[MEMORY] 'map' leaves scope => all nodes, key strings, and inline Points freed automatically.
+
+======================================================================
+  Example 4a: std::map<int32_t, Person*>  [heap-allocated class]
+======================================================================
+
+[MEMORY MODEL]
+  Stack : The map object lives on the caller's stack.
+  Heap  : Two separate heap allocations per entry:
+            (1) The tree node (std::allocator) — stores the int32_t key and
+                a raw Person* pointer (8 B on 64-bit).
+            (2) The Person object itself, created with 'new Person(...)'.
+                Person holds a std::string member (name_) which may itself
+                allocate a heap buffer when the name exceeds the SSO limit.
+  !!! SAME OWNERSHIP CAVEAT AS EXAMPLES 2a/2b !!!
+          The map destructor frees tree nodes only. It does NOT call delete
+          on any Person*. Failing to delete each Person* before or after
+          erasing results in memory leaks and suppresses ~Person() calls.
+  Rule  : Erase the iterator first (frees the node), then delete the Person*
+          (calls ~Person(), which calls ~std::string() on name_).
+          Production alternative: std::unique_ptr<Person> as the value type.
+  Note  : Person is intentionally non-copyable. Only pointer (or move)
+          semantics are allowed, which matches the map<int32_t,Person*> model.
+
+  -- Insertions --
+  [ADD]    key=3  value=new Person("Charlie", 35)  @0x172b12cee10  => 2+ heap allocations (node + Person + possible name_ buf)
+  [ADD]    key=1  value=new Person("Alice", 30)  @0x172b12ce900  => 2+ heap allocations (node + Person + possible name_ buf)
+  [ADD]    key=5  value=new Person("Eve", 28)  @0x172b12cebd0  => 2+ heap allocations (node + Person + possible name_ buf)
+  [ADD]    key=2  value=new Person("Bob", 25)  @0x172b12cee40  => 2+ heap allocations (node + Person + possible name_ buf)
+  [ADD]    key=4  value=new Person("Dave", 40)  @0x172b12cec00  => 2+ heap allocations (node + Person + possible name_ buf)
+
+[MAP STATE]
+{
+    1: 0x172b12ce900,
+    2: 0x172b12cee40,
+    3: 0x172b12cee10,
+    4: 0x172b12cec00,
+    5: 0x172b12cebd0
+}
+
+  -- Removals --
+  [REMOVE] key=5  person={ name: "Eve", age: 28 }  @0x172b12cebd0
+           Step 1 — erase map iterator  => node freed
+           Step 2 — delete Person*      => ~Person() called,
+                                           name_ string freed,
+                                           Person block freed
+  [REMOVE] key=1  person={ name: "Alice", age: 30 }  @0x172b12ce900
+           Step 1 — erase map iterator  => node freed
+           Step 2 — delete Person*      => ~Person() called,
+                                           name_ string freed,
+                                           Person block freed
+
+[MAP STATE — after removals]
+{
+    2: 0x172b12cee40,
+    3: 0x172b12cee10,
+    4: 0x172b12cec00
+}
+[MEMORY] Manually cleaning up the remaining 3 Person pointer(s) before 'map' goes out of scope:
+  delete Person* key=2  @0x172b12cee40  (name="Bob")
+  delete Person* key=3  @0x172b12cee10  (name="Charlie")
+  delete Person* key=4  @0x172b12cec00  (name="Dave")
+  'map' leaves scope => remaining nodes freed automatically.
+
+======================================================================
+  Example 4b: std::map<std::string, Person*>  [heap-allocated class]
+======================================================================
+
+[MEMORY MODEL]
+  Stack : The map object lives on the caller's stack.
+  Heap  : Up to four distinct heap allocations per entry:
+            (1) The tree node (std::allocator).
+            (2) The key std::string's internal character buffer (when the key
+                is longer than the SSO threshold, typically ~15 chars).
+            (3) The Person object created with 'new Person(...)'.
+            (4) The Person::name_ std::string's internal buffer (again, only
+                when the name is longer than the SSO threshold).
+  !!! SAME OWNERSHIP CAVEAT AS EXAMPLE 4a !!!
+          The map destructor frees nodes and key strings automatically but
+          does NOT delete any Person*. Explicit cleanup is required.
+
+  -- Insertions --
+  [ADD]    key="charlie"  value=new Person("Charlie", 35)  @0x172b12cef30
+  [ADD]    key="alice"  value=new Person("Alice", 30)  @0x172b12ce810
+  [ADD]    key="eve"  value=new Person("Eve", 28)  @0x172b12cef00
+  [ADD]    key="bob"  value=new Person("Bob", 25)  @0x172b12ce840
+  [ADD]    key="dave"  value=new Person("Dave", 40)  @0x172b12cef90
+
+[MAP STATE — ordered lexicographically]
+{
+    "alice": 0x172b12ce810,
+    "bob": 0x172b12ce840,
+    "charlie": 0x172b12cef30,
+    "dave": 0x172b12cef90,
+    "eve": 0x172b12cef00
+}
+
+  -- Removals --
+  [REMOVE] key="eve"  person={ name: "Eve", age: 28 }  @0x172b12cef00
+           Step 1 — erase map iterator  => node + key string freed
+           Step 2 — delete Person*      => ~Person() called,
+                                           name_ freed, Person block freed
+  [REMOVE] key="charlie"  person={ name: "Charlie", age: 35 }  @0x172b12cef30
+           Step 1 — erase map iterator  => node + key string freed
+           Step 2 — delete Person*      => ~Person() called,
+                                           name_ freed, Person block freed
+
+[MAP STATE — after removals]
+{
+    "alice": 0x172b12ce810,
+    "bob": 0x172b12ce840,
+    "dave": 0x172b12cef90
+}
+[MEMORY] Manually cleaning up the remaining 3 Person pointer(s):
+  delete Person* key="alice"  @0x172b12ce810  (name="Alice")
+  delete Person* key="bob"  @0x172b12ce840  (name="Bob")
+  delete Person* key="dave"  @0x172b12cef90  (name="Dave")
+  'map' leaves scope => remaining nodes and key strings freed automatically.
+
+======================================================================
+  Example 5a: std::map<int32_t, Point2*>  [heap-allocated struct — compare with 4a]
+======================================================================
+
+[MEMORY MODEL — identical pattern to Example 4a (Person*)]
+  Stack : The map object lives on the caller's stack.
+  Heap  : Exactly two heap allocations per entry — no more, no less:
+            (1) The tree node (std::allocator) — stores the int32_t key and
+                a raw Point2* pointer (8 B on 64-bit).
+            (2) The Point2 object created with 'new Point2(x, y)'.
+                Point2 has no std::string member, so there is no tertiary
+                allocation — unlike Person* where name_ may add one more.
+  !!! RAII DOES NOT COVER THE POINTEE !!!
+          struct vs. class makes no difference here: the map destructor
+          frees tree nodes but does NOT call delete on stored Point2*
+          pointers.  The same two-step removal pattern is mandatory:
+            Step 1 — erase the iterator      => node freed
+            Step 2 — delete the Point2*      => Point2 object freed
+  Comparison with Point (examples 3a/3b):
+          Point  is stored BY VALUE inside the node → 1 allocation, RAII.
+          Point2 is stored BY POINTER separately   → 2 allocations, manual.
+          The struct keyword is the same in both cases; the allocation model
+          is entirely determined by how the type is used, not what it is.
+
+  -- Insertions --
+  [ADD]    key=3  value=new Point2{ x: 30, y: 31 }  @0x172b12d34c0  => 2 heap allocations (node + Point2)
+  [ADD]    key=1  value=new Point2{ x: 10, y: 11 }  @0x172b12d34e0  => 2 heap allocations (node + Point2)
+  [ADD]    key=5  value=new Point2{ x: 50, y: 51 }  @0x172b12d3500  => 2 heap allocations (node + Point2)
+  [ADD]    key=2  value=new Point2{ x: 20, y: 21 }  @0x172b12d3520  => 2 heap allocations (node + Point2)
+  [ADD]    key=4  value=new Point2{ x: 40, y: 41 }  @0x172b12d3540  => 2 heap allocations (node + Point2)
+
+[MAP STATE]
+{
+    1: 0x172b12d34e0,
+    2: 0x172b12d3520,
+    3: 0x172b12d34c0,
+    4: 0x172b12d3540,
+    5: 0x172b12d3500
+}
+
+  -- Removals --
+  [REMOVE] key=5  point={ x: 50, y: 51 }  @0x172b12d3500
+           Step 1 — erase map iterator  => node freed
+           Step 2 — delete Point2*      => ~Point2() called (trivial), Point2 block freed
+  [REMOVE] key=1  point={ x: 10, y: 11 }  @0x172b12d34e0
+           Step 1 — erase map iterator  => node freed
+           Step 2 — delete Point2*      => ~Point2() called (trivial), Point2 block freed
+
+[MAP STATE — after removals]
+{
+    2: 0x172b12d3520,
+    3: 0x172b12d34c0,
+    4: 0x172b12d3540
+}
+[MEMORY] Manually cleaning up the remaining 3 Point2 pointer(s) before 'map' goes out of scope:
+  delete Point2* key=2  @0x172b12d3520  { x: 20, y: 21 }
+  delete Point2* key=3  @0x172b12d34c0  { x: 30, y: 31 }
+  delete Point2* key=4  @0x172b12d3540  { x: 40, y: 41 }
+  'map' leaves scope => remaining nodes freed automatically.
+
+======================================================================
+  Example 5b: std::map<std::string, Point2*>  [heap-allocated struct — compare with 4b]
+======================================================================
+
+[MEMORY MODEL — identical pattern to Example 4b (Person*)]
+  Stack : The map object lives on the caller's stack.
+  Heap  : Up to three distinct heap allocations per entry:
+            (1) The tree node (std::allocator).
+            (2) The key std::string's internal character buffer (SSO overflow,
+                for keys longer than ~15 chars — these keys are short enough
+                that SSO likely covers them, so allocation (2) may not occur).
+            (3) The Point2 object created with 'new Point2(x, y)'.
+                Point2 holds no std::string member, so exactly one allocation
+                for the object itself — simpler than Person* (which may have
+                an additional name_ buffer).
+  !!! SAME OWNERSHIP CAVEAT AS ALL PREVIOUS POINTER EXAMPLES !!!
+          The map destructor frees nodes and key strings automatically but
+          does NOT delete stored Point2* values. Explicit cleanup is required.
+  Key takeaway:
+          Whether the value type is declared with 'struct' or 'class' has
+          zero impact on how it must be managed in a map.  Point2 and Person
+          are both non-copyable types with pointer ownership — their maps
+          are written and cleaned up in exactly the same way.
+
+  -- Insertions --
+  [ADD]    key="origin"  value=new Point2{ x: 0, y: 0 }  @0x172b12d34c0
+  [ADD]    key="top_left"  value=new Point2{ x: 0, y: 100 }  @0x172b12d34e0
+  [ADD]    key="top_right"  value=new Point2{ x: 100, y: 100 }  @0x172b12d3500
+  [ADD]    key="bot_left"  value=new Point2{ x: 0, y: 0 }  @0x172b12d3520
+  [ADD]    key="bot_right"  value=new Point2{ x: 100, y: 0 }  @0x172b12eb390
+
+[MAP STATE — ordered lexicographically]
+{
+    "bot_left": 0x172b12d3520,
+    "bot_right": 0x172b12eb390,
+    "origin": 0x172b12d34c0,
+    "top_left": 0x172b12d34e0,
+    "top_right": 0x172b12d3500
+}
+
+  -- Removals --
+  [REMOVE] key="origin"  point={ x: 0, y: 0 }  @0x172b12d34c0
+           Step 1 — erase map iterator  => node + key string freed
+           Step 2 — delete Point2*      => ~Point2() called (trivial), Point2 block freed
+  [REMOVE] key="top_right"  point={ x: 100, y: 100 }  @0x172b12d3500
+           Step 1 — erase map iterator  => node + key string freed
+           Step 2 — delete Point2*      => ~Point2() called (trivial), Point2 block freed
+
+[MAP STATE — after removals]
+{
+    "bot_left": 0x172b12d3520,
+    "bot_right": 0x172b12eb390,
+    "top_left": 0x172b12d34e0
+}
+[MEMORY] Manually cleaning up the remaining 3 Point2 pointer(s):
+  delete Point2* key="bot_left"  @0x172b12d3520  { x: 0, y: 0 }
+  delete Point2* key="bot_right"  @0x172b12eb390  { x: 100, y: 0 }
+  delete Point2* key="top_left"  @0x172b12d34e0  { x: 0, y: 100 }
+  'map' leaves scope => remaining nodes and key strings freed automatically.
+
+
+[DONE] All 10 examples completed successfully.

@@ -1,0 +1,132 @@
+# CLAUDE.md — expr_eval_py (Python bindings)
+
+## What this project is
+
+Python 3.x bindings for the `expr_eval` C++26 library at `../expr_eval/multiclass/`.
+Bridge mechanism: **ctypes + C ABI** (not pybind11 — see explanation.md §1).
+
+```python
+from expr_eval_py import evaluate
+evaluate("v1 > 10 && flag", {"v1": "15", "flag": "true"})  # → True
+```
+
+---
+
+## Environment
+
+- Python: 3.14.0 at `C:\python314\python.exe` (MSVC build, 64-bit)
+- Compiler: GCC 15.2.0 (MSYS2 UCRT64) — **not MSVC**
+- Make: `mingw32-make`
+- pytest: installed via `pip` into C:\python314
+
+**Why ctypes and not pybind11:** Python 3.14 was compiled with MSVC; GCC
+extensions have an incompatible C++ ABI (exceptions crash at the boundary).
+The C ABI (`extern "C"`) is compiler-neutral. Full rationale in `explanation.md`.
+
+---
+
+## Build
+
+```bash
+# From src/expr_eval_py/:
+mingw32-make all       # builds DLL + copies libwinpthread-1.dll
+mingw32-make test      # build + run pytest
+mingw32-make clean     # rm DLL + copied runtime
+```
+
+**What `all` does:**
+1. Compiles `bridge/bridge.cpp` + all 10 C++ library sources into
+   `expr_eval_py/_expr_eval_core.dll`
+2. Copies `libwinpthread-1.dll` from `/c/msys64/ucrt64/bin/` into
+   `expr_eval_py/` (MSYS2 runtime dep that `libstdc++` pulls in even with
+   `-static-libstdc++`)
+
+**`__init__.py` calls `os.add_dll_directory(package_dir)` before `ctypes.CDLL`**
+so Windows finds `libwinpthread-1.dll` next to the main DLL without MSYS2 on PATH.
+
+---
+
+## File layout
+
+```
+src/expr_eval_py/
+├── CLAUDE.md
+├── Makefile
+├── bridge/
+│   └── bridge.cpp          C ABI wrapper (only file that #includes C++ headers)
+├── expr_eval_py/
+│   ├── __init__.py         ctypes loader + Python API
+│   ├── _expr_eval.pyi      type stubs (mypy/pyright)
+│   ├── _expr_eval_core.dll ← generated (not in VCS)
+│   └── libwinpthread-1.dll ← copied (not in VCS)
+├── tests/
+│   └── test_bindings.py    59 pytest tests
+├── summary.md
+└── explanation.md
+```
+
+---
+
+## C bridge API (bridge.cpp)
+
+```c
+// Returns: 0=OK, 1=ParseError, 2=EvaluationError, 3=internal
+int32_t expr_eval_evaluate(
+    const char*  expression,
+    const char** var_keys,    // array of var_count strings
+    const char** var_values,  // array of var_count strings
+    int32_t      var_count,
+    int32_t      verbose,     // 0=suppress cout, 1=print AST
+    int32_t*     result_out,  // set to 1(true) or 0(false) on OK
+    char*        error_buf,   // filled on error
+    int32_t      error_buf_size
+);
+
+const char* expr_eval_version(void);  // → "1.0.0"
+```
+
+ALL C++ exceptions are caught inside this function.  Nothing C++-typed crosses
+the `extern "C"` boundary.
+
+---
+
+## Python API
+
+```python
+evaluate(expression: str,
+         variables: dict[str,str] | None = None,
+         *, verbose: bool = False) -> bool
+
+version() -> str
+
+class ParseError(ValueError): ...      # bad syntax
+class EvaluationError(RuntimeError): ...  # type mismatch / unknown var
+```
+
+`verbose` is keyword-only (forces `evaluate("x>1", vars, verbose=True)` syntax).
+`variables=None` avoids the mutable-default-argument Python anti-pattern.
+
+---
+
+## Test results (current)
+
+```
+59 passed in 0.06s   (Python 3.14.0, pytest 9.0.3)
+```
+
+---
+
+## Known issue / limitation
+
+`libwinpthread-1.dll` copy and its path in the Makefile are hardcoded to
+`/c/msys64/ucrt64/bin/`.  If MSYS2 is installed elsewhere, update
+`WINPTHREAD_SRC` in the Makefile.
+
+---
+
+## What must never change
+
+- `../expr_eval/multiclass/` C++ sources — not owned by this project.
+- The C bridge error codes (EXPR_OK=0, PARSE=1, EVAL=2, INTERNAL=3) must stay
+  in sync between `bridge.cpp` and `__init__.py`.
+- `extern "C"` on all exported bridge functions — removing it breaks ctypes.
