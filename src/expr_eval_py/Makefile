@@ -10,44 +10,43 @@
 # ── Compiler & base flags ─────────────────────────────────────────────────────
 CXX      := g++
 CXXFLAGS := -std=c++26 -O2 -Wall -Wextra
+# Generate dependency files (.d) automatically
+CPPFLAGS := -MMD -MP
 
 # ── Platform detection ────────────────────────────────────────────────────────
-# $(OS) == 'Windows_NT' on all Windows hosts (MSYS2, Cygwin, native shell);
-# unset or empty on Linux / macOS.
+PYTHON := $(shell command -v python3 2>/dev/null || command -v python 2>/dev/null)
+ifeq ($(PYTHON),)
+    $(error Python not found on PATH. Install Python and ensure 'python3' or 'python' is accessible.)
+endif
+
 ifeq ($(OS),Windows_NT)
     # Windows: produce a DLL; embed GCC runtime statically.
-    # libwinpthread-1.dll cannot be embedded (libstdc++ references it internally);
-    # copy it next to the DLL so Python finds it via os.add_dll_directory().
-    LIB_SUFFIX    := .dll
-    LDFLAGS       := -shared -static-libgcc -static-libstdc++
-    WINPTHREAD_SRC := /c/msys64/ucrt64/bin/libwinpthread-1.dll
+    LIB_SUFFIX     := .dll
+    LDFLAGS        := -shared -static-libgcc -static-libstdc++
+    
+    # Use MSYSTEM_PREFIX (e.g., /ucrt64)
+    PREFIX         := $(if $(MSYSTEM_PREFIX),$(MSYSTEM_PREFIX),/ucrt64)
+    WINPTHREAD_SRC := $(PREFIX)/bin/libwinpthread-1.dll
     WINPTHREAD_DST := expr_eval_py/libwinpthread-1.dll
-    COPY_RUNTIME   = cp -f "$(WINPTHREAD_SRC)" "$(WINPTHREAD_DST)" \
-                     && echo "Copied runtime: $(WINPTHREAD_DST)"
+    
+    RUNTIME_TARGET := $(WINPTHREAD_DST)
     CLEAN_RUNTIME  = rm -f "$(WINPTHREAD_DST)"
-    PYTHON        := $(shell py -c "import sys; print(sys.executable)")
-    # $(shell where.exe python 2>/dev/null || where.exe python3 2>/dev/null)
 else
-    # Linux: produce a .so; -fPIC is mandatory for position-independent shared libs.
-    # -static-libgcc / -static-libstdc++ embed the GCC runtime so the .so is
-    # portable across distros without requiring a matching libstdc++ version.
-    LIB_SUFFIX    := .so
-    CXXFLAGS      += -fPIC
-    LDFLAGS       := -shared -static-libgcc -static-libstdc++
-    COPY_RUNTIME   = :
+    # Linux: produce a .so; -fPIC is mandatory for shared libs.
+    LIB_SUFFIX     := .so
+    CXXFLAGS       += -fPIC
+    LDFLAGS        := -shared -static-libgcc -static-libstdc++
+    
+    RUNTIME_TARGET :=
     CLEAN_RUNTIME  = :
-    PYTHON        := $(shell which python 2>/dev/null || which python3 2>/dev/null)
-endif
-ifeq ($(PYTHON),)
-    $(error Python not found on PATH. Install Python and ensure 'python' or 'python3' is accessible.)
 endif
 
-# ── Path to the C++ library (sibling directory) ───────────────────────────────
+# ── Paths & Sources ───────────────────────────────────────────────────────────
 EXPR_EVAL_ROOT := ../expr_eval/multiclass
-INC := -I $(EXPR_EVAL_ROOT)/include
+INC            := -I $(EXPR_EVAL_ROOT)/include
 
-# ── C++ library source files (same set as multiclass/Makefile) ───────────────
-LIB_SRCS := \
+# Separate the sources to map them cleanly into the build directory
+LIB_SRCS_CORE := \
     $(EXPR_EVAL_ROOT)/src/types/Value.cpp               \
     $(EXPR_EVAL_ROOT)/src/ast/AstNode.cpp               \
     $(EXPR_EVAL_ROOT)/src/ast/BinaryNode.cpp            \
@@ -59,26 +58,60 @@ LIB_SRCS := \
     $(EXPR_EVAL_ROOT)/src/parser/Parser.cpp             \
     $(EXPR_EVAL_ROOT)/src/ExpressionEvaluator.cpp
 
-# ── Output: shared library lands inside the Python package directory ──────────
-# __init__.py detects the correct suffix at import time via sys.platform.
+LIB_SRCS_BRIDGE := bridge/bridge.cpp
+
+# ── Object Files & Build Directory ────────────────────────────────────────────
+OBJ_DIR := build
+
+# Map core sources: ../expr_eval/multiclass/src/xyz.cpp -> build/src/xyz.o
+OBJS_CORE := $(patsubst $(EXPR_EVAL_ROOT)/src/%.cpp, $(OBJ_DIR)/src/%.o, $(LIB_SRCS_CORE))
+
+# Map bridge sources: bridge/xyz.cpp -> build/bridge/xyz.o
+OBJS_BRIDGE := $(patsubst bridge/%.cpp, $(OBJ_DIR)/bridge/%.o, $(LIB_SRCS_BRIDGE))
+
+# Combine them for the linker
+OBJS := $(OBJS_CORE) $(OBJS_BRIDGE)
+DEPS := $(OBJS:.o=.d)
+
+# ── Output ────────────────────────────────────────────────────────────────────
 LIB := expr_eval_py/_expr_eval_core$(LIB_SUFFIX)
 
 # ─────────────────────────────────────────────────────────────────────────────
 
 .PHONY: all test clean
 
-all: $(LIB)
-	@$(COPY_RUNTIME)
+all: $(LIB) $(RUNTIME_TARGET)
 
-$(LIB): bridge/bridge.cpp $(LIB_SRCS)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(INC) $^ -o $@
+# Link all object files into the final shared library
+$(LIB): $(OBJS)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ -o $@
 	@echo "Built: $@"
 
-# Run pytest from this directory so expr_eval_py/ is found as a package.
+# Compile core .cpp files to .o files inside build/src/
+$(OBJ_DIR)/src/%.o: $(EXPR_EVAL_ROOT)/src/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(INC) -c $< -o $@
+
+# Compile bridge .cpp files to .o files inside build/bridge/
+$(OBJ_DIR)/bridge/%.o: bridge/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(INC) -c $< -o $@
+
+# Copy runtime DLL (Windows only)
+$(WINPTHREAD_DST): $(WINPTHREAD_SRC)
+	@mkdir -p $(dir $@)
+	@cp -f "$<" "$@"
+	@echo "Copied runtime: $@"
+
 test: all
 	$(PYTHON) -m pytest tests/ -v
 
-# Remove the shared library and (on Windows) the copied runtime.
 clean:
+	rm -rf $(OBJ_DIR)
 	rm -f $(LIB)
 	@$(CLEAN_RUNTIME)
+	@echo "Cleaned build artifacts."
+
+# Include the generated dependency files so Make knows when headers change
+-include $(DEPS)
