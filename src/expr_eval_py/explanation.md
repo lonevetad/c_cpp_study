@@ -174,42 +174,103 @@ next to the main DLL without any PATH change.
 
 ---
 
-## 6. Why the Makefile copies the DLL instead of using a Make dependency rule
+## 6. Runtime DLL copy: proper Make dependency target
 
-The expected approach would be:
+The Makefile copies `libwinpthread-1.dll` via a proper Make dependency rule:
+
+```makefile
+$(WINPTHREAD_DST): $(WINPTHREAD_SRC)
+    @mkdir -p $(dir $@)
+    @cp -f "$<" "$@"
+    @echo "Copied runtime: $@"
+```
+
+`all: $(LIB) $(RUNTIME_TARGET)` lists `$(WINPTHREAD_DST)` as a prerequisite on
+Windows (`RUNTIME_TARGET := $(WINPTHREAD_DST)`) and nothing on Linux
+(`RUNTIME_TARGET :=`).  Make only runs the copy when `$(WINPTHREAD_SRC)` is
+newer than `$(WINPTHREAD_DST)`.
+
+### Why the original approach used a shell recipe
+
+The previous Makefile called `cp` unconditionally inside the `all` recipe
+because the dependency rule:
 
 ```makefile
 $(WINPTHREAD_DST): $(WINPTHREAD_SRC)
     cp $< $@
 ```
 
-This fails because GNU Make on MSYS2 appends a `*` to the path of executable
-files returned by `ls`, making the source path `/c/msys64/ucrt64/bin/libwinpthread-1.dll*`
-which Make does not match.  Using a shell `cp` command inside the `all` recipe
-bypasses the Make dependency parser and works correctly.
+failed under GNU Make on MSYS2: Make appends `*` to the path of executable
+files when it expands the rule, making the source path
+`/c/msys64/ucrt64/bin/libwinpthread-1.dll*` — a glob that matches nothing.
+
+### How the new approach avoids the problem
+
+`WINPTHREAD_SRC` is now constructed from `MSYSTEM_PREFIX` (an environment
+variable MSYS2 always exports, e.g., `/ucrt64`), not via wildcard or `ls`:
+
+```makefile
+PREFIX         := $(if $(MSYSTEM_PREFIX),$(MSYSTEM_PREFIX),/ucrt64)
+WINPTHREAD_SRC := $(PREFIX)/bin/libwinpthread-1.dll
+```
+
+Make evaluates `$(WINPTHREAD_SRC)` as a plain string — no `*` appended — so
+the dependency rule works correctly.  As a bonus the path adapts to whatever
+MSYS2 subsystem is active (UCRT64, MINGW64, …) instead of being hardcoded.
 
 ---
 
-## 7. Why one-step compilation (no object files)
+## 7. Incremental compilation with object files
 
-The Makefile compiles all sources in a single `g++` invocation:
+The Makefile compiles each source file separately into an object file under
+`build/`, then links them in one step:
 
 ```makefile
-$(DLL): bridge/bridge.cpp $(LIB_SRCS)
-    $(CXX) $(CXXFLAGS) $(LDFLAGS) $(INC) $^ -o $@
+CPPFLAGS    := -MMD -MP
+OBJ_DIR     := build
+OBJS_CORE   := $(patsubst $(EXPR_EVAL_ROOT)/src/%.cpp, $(OBJ_DIR)/src/%.o, $(LIB_SRCS_CORE))
+OBJS_BRIDGE := $(patsubst bridge/%.cpp, $(OBJ_DIR)/bridge/%.o, $(LIB_SRCS_BRIDGE))
+DEPS        := $(OBJS:.o=.d)
+
+$(LIB): $(OBJS)
+    $(CXX) $(CXXFLAGS) $(LDFLAGS) $^ -o $@
+
+$(OBJ_DIR)/src/%.o: $(EXPR_EVAL_ROOT)/src/%.cpp
+    $(CXX) $(CPPFLAGS) $(CXXFLAGS) $(INC) -c $< -o $@
+
+$(OBJ_DIR)/bridge/%.o: bridge/%.cpp
+    $(CXX) $(CPPFLAGS) $(CXXFLAGS) $(INC) -c $< -o $@
+
+-include $(DEPS)
 ```
 
-Pros:
-- Simpler Makefile — no BUILD_DIR, no pattern rules
-- No intermediate `.o` files to manage
+### Why this replaced one-step compilation
 
-Cons:
-- No incremental compilation — any change recompiles everything
-- Slower for iterative development
+The previous Makefile compiled all 11 sources in a single `g++` invocation —
+simple but not incremental.  Any change to any file (including headers) forced
+a full rebuild.
 
-For this project (10 source files, sub-second compilation), the simplicity
-wins.  The `multiclass/Makefile` uses object files and `-MMD -MP` for
-incremental builds — that approach is preferred for active development.
+The separate-compilation approach:
+
+- Rebuilds only modified translation units.
+- `-MMD` generates a `.d` dependency file per `.o` at compile time, listing
+  every header the translation unit included.
+- `-MP` adds phony targets for headers so Make does not error if a header is
+  deleted between builds.
+- `-include $(DEPS)` silently loads all `.d` files; the `-` prefix suppresses
+  errors on first build (before any `.d` file exists).
+
+This is the same pattern used by `../expr_eval/multiclass/Makefile`.
+
+### Trade-offs
+
+| Approach | Simplicity | Incremental | Header-change aware |
+|---|---|---|---|
+| One-step (old) | ✅ | ❌ | ❌ |
+| Object files (new) | moderate | ✅ | ✅ via `-MMD -MP` |
+
+For 11 source files the difference in rebuild time is modest, but the approach
+scales correctly as the library grows and avoids stale-header bugs.
 
 ---
 
@@ -282,7 +343,7 @@ same source files.  The key differences between the two platforms:
 | Position-independent code | not needed (PE format) | `-fPIC` mandatory |
 | GCC runtime dep | `libwinpthread-1.dll` (must be copied) | glibc (system-provided) |
 | Make binary | `mingw32-make` | `make` |
-| Python interpreter | auto-detected: `which python` → `which python3` | auto-detected: `which python3` → `which python` |
+| Python interpreter | `command -v python3` → `command -v python` (unified; detected before the platform `ifeq` block) | ← same |
 
 ### Platform detection
 
@@ -290,6 +351,9 @@ GNU Make sets `$(OS)` to `Windows_NT` on all Windows hosts (including MSYS2
 and Cygwin).  On Linux and macOS it is unset.  This is the idiomatic detection:
 
 ```makefile
+# Python detection is platform-independent — placed before the ifeq block.
+PYTHON := $(shell command -v python3 2>/dev/null || command -v python 2>/dev/null)
+
 ifeq ($(OS),Windows_NT)
     LIB_SUFFIX := .dll
     ...
@@ -299,6 +363,12 @@ else
     ...
 endif
 ```
+
+`command -v` is a POSIX shell built-in that locates executables on PATH without
+invoking an external process.  It is available in both MSYS2 bash and Linux
+bash.  `2>/dev/null` silences the "not found" message so Make gets an empty
+string on miss rather than an error.  The `||` chain tries `python3` first on
+both platforms; `python` is the fallback.
 
 ### Why `-fPIC` on Linux only
 
@@ -320,24 +390,28 @@ On Linux, `libstdc++` and `libgcc` can be fully embedded with
 is glibc (`libc.so.6`), which is always present on any Linux system.  No
 extra file copy is needed.
 
-### COPY_RUNTIME / CLEAN_RUNTIME variables
+### RUNTIME_TARGET and CLEAN_RUNTIME variables
 
-The `all` and `clean` targets need different actions per platform.  Using
-Make-level conditional variables avoids duplicating the entire target:
+The runtime copy uses two platform-specific variables.  `RUNTIME_TARGET` is
+set to `$(WINPTHREAD_DST)` on Windows and left empty on Linux; `CLEAN_RUNTIME`
+is a shell command used inside the `clean` recipe:
 
 ```makefile
 ifeq ($(OS),Windows_NT)
-    COPY_RUNTIME  = cp -f "$(WINPTHREAD_SRC)" "$(WINPTHREAD_DST)" \
-                    && echo "Copied runtime: $(WINPTHREAD_DST)"
-    CLEAN_RUNTIME = rm -f "$(WINPTHREAD_DST)"
+    RUNTIME_TARGET := $(WINPTHREAD_DST)
+    CLEAN_RUNTIME   = rm -f "$(WINPTHREAD_DST)"
 else
-    COPY_RUNTIME  = :
-    CLEAN_RUNTIME = :
+    RUNTIME_TARGET :=
+    CLEAN_RUNTIME   = :
 endif
 
-all: $(LIB)
-    @$(COPY_RUNTIME)
+all: $(LIB) $(RUNTIME_TARGET)
 ```
 
-`:` is the POSIX shell no-op built-in.  `@$(COPY_RUNTIME)` silences Make's
-command echo; on Linux the shell receives only `:` and does nothing.
+On Linux `$(RUNTIME_TARGET)` expands to nothing, so `all` only depends on
+`$(LIB)`.  On Windows, Make tracks whether `$(WINPTHREAD_DST)` is up-to-date
+with respect to `$(WINPTHREAD_SRC)` and skips the copy when it is.
+
+`CLEAN_RUNTIME` remains a shell-command variable (not a Make target) because
+`clean` is always phony — no dependency tracking is needed there.  `:` is the
+POSIX no-op built-in; it silently does nothing on Linux.
