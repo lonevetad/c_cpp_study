@@ -1,0 +1,8 @@
+fcpp_clone_GITIGNORE_ME/
+build/
+fcpp_py/_fcpp_core.dll
+fcpp_py/_fcpp_core.so
+fcpp_py/libwinpthread-1.dll
+__pycache__/
+*.pyc
+.pytest_cache/

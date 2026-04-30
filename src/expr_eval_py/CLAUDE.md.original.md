@@ -2,8 +2,8 @@
 
 ## What this project is
 
-Python 3.x bindings for `expr_eval` C++26 library at `../expr_eval/multiclass/`.
-Bridge: **ctypes + C ABI** (not pybind11 — see explanation.md §1).
+Python 3.x bindings for the `expr_eval` C++26 library at `../expr_eval/multiclass/`.
+Bridge mechanism: **ctypes + C ABI** (not pybind11 — see explanation.md §1).
 
 ```python
 from expr_eval_py import evaluate
@@ -17,16 +17,18 @@ evaluate("v1 > 10 && flag", {"v1": "15", "flag": "true"})  # → True
 ### Windows 11 (MSYS2 UCRT64)
 - Python: auto-detected via `command -v python3` (falls back to `command -v python`); tested with 3.14.0 (MSVC build, 64-bit) at `C:\python314\python.exe`
 - Compiler: GCC 15.2.0 (MSYS2 UCRT64) — **not MSVC**
-- Make: `mingw32-make` (`make` not on PATH in MSYS2)
+- Make: `mingw32-make` (`make` is not on PATH in MSYS2)
 - pytest: `pip install pytest`
 
 ### Linux (Mint / Ubuntu)
 - Python: system `python3` (any ≥ 3.8)
 - Compiler: GCC **≥ 15** required for `-std=c++26`; on Ubuntu 24.04 install via `sudo add-apt-repository ppa:ubuntu-toolchain-r/test && sudo apt install g++-15`
 - Make: `make`
-- pytest: `pip3 install pytest` (or `pip install pytest` in venv)
+- pytest: `pip3 install pytest` (or `pip install pytest` in a venv)
 
-**Why ctypes not pybind11:** Python 3.14 compiled with MSVC; GCC extensions = incompatible C++ ABI (exceptions crash). C ABI (`extern "C"`) compiler-neutral. Full rationale in `explanation.md`.
+**Why ctypes and not pybind11:** Python 3.14 was compiled with MSVC; GCC
+extensions have an incompatible C++ ABI (exceptions crash at the boundary).
+The C ABI (`extern "C"`) is compiler-neutral. Full rationale in `explanation.md`.
 
 ---
 
@@ -45,11 +47,20 @@ make clean             # remove .so
 ```
 
 **What `all` does:**
-1. Compiles `bridge/bridge.cpp` + 10 C++ sources incrementally into `build/` object files, links to `expr_eval_py/_expr_eval_core.dll` (Windows) / `_expr_eval_core.so` (Linux). `-MMD -MP` auto-generates `.d` dep files; only changed TUs recompile.
-2. **Windows only:** Copies `libwinpthread-1.dll` from active MSYS2 prefix (`$MSYSTEM_PREFIX/bin/`, default `/ucrt64/bin/`) into `expr_eval_py/` — MSYS2 runtime dep `libstdc++` pulls in even with `-static-libstdc++`. Proper Make dep target; runs only when source newer than destination.
-3. **Linux:** `.so` compiled with `-fPIC` (required for shared libs), GCC runtime embedded via `-static-libgcc -static-libstdc++`; no extra copy.
+1. Compiles `bridge/bridge.cpp` + all 10 C++ library sources incrementally into
+   object files under `build/`, then links to `expr_eval_py/_expr_eval_core.dll`
+   (Windows) or `_expr_eval_core.so` (Linux).  `-MMD -MP` auto-generates header
+   dependency files (`.d`) so only changed translation units recompile.
+2. **Windows only:** Copies `libwinpthread-1.dll` from the active MSYS2 prefix
+   (`$MSYSTEM_PREFIX/bin/`, defaulting to `/ucrt64/bin/`) into `expr_eval_py/`
+   — MSYS2 runtime dep that `libstdc++` pulls in even with `-static-libstdc++`.
+   The copy is a proper Make dependency target; only runs when the source DLL
+   is newer than the destination.
+3. **Linux:** The `.so` is compiled with `-fPIC` (required for shared libs) and
+   embeds the GCC runtime via `-static-libgcc -static-libstdc++`; no extra copy.
 
-**`__init__.py` calls `os.add_dll_directory(package_dir)` before `ctypes.CDLL`** — Windows finds `libwinpthread-1.dll` next to main DLL without MSYS2 on PATH.
+**`__init__.py` calls `os.add_dll_directory(package_dir)` before `ctypes.CDLL`**
+so Windows finds `libwinpthread-1.dll` next to the main DLL without MSYS2 on PATH.
 
 ---
 
@@ -96,7 +107,8 @@ int32_t expr_eval_evaluate(
 const char* expr_eval_version(void);  // → "1.0.0"
 ```
 
-All C++ exceptions caught inside. Nothing C++-typed crosses `extern "C"` boundary.
+ALL C++ exceptions are caught inside this function.  Nothing C++-typed crosses
+the `extern "C"` boundary.
 
 ---
 
@@ -113,8 +125,8 @@ class ParseError(ValueError): ...      # bad syntax
 class EvaluationError(RuntimeError): ...  # type mismatch / unknown var
 ```
 
-`verbose` keyword-only (forces `evaluate("x>1", vars, verbose=True)` syntax).
-`variables=None` avoids mutable-default-argument anti-pattern.
+`verbose` is keyword-only (forces `evaluate("x>1", vars, verbose=True)` syntax).
+`variables=None` avoids the mutable-default-argument Python anti-pattern.
 
 ---
 
@@ -128,12 +140,15 @@ class EvaluationError(RuntimeError): ...  # type mismatch / unknown var
 
 ## Known issue / limitation
 
-`verbose=True` not thread-safe: redirects `std::cout` globally. Concurrent calls may interleave output. `verbose=False` (default) safe.
+`verbose=True` is not thread-safe: it redirects `std::cout` globally.  In a
+multi-threaded Python program, concurrent calls with `verbose=True` may
+interleave output.  `verbose=False` (the default) is safe.
 
 ---
 
 ## What must never change
 
 - `../expr_eval/multiclass/` C++ sources — not owned by this project.
-- C bridge error codes (EXPR_OK=0, PARSE=1, EVAL=2, INTERNAL=3) must stay in sync: `bridge.cpp` ↔ `__init__.py`.
+- The C bridge error codes (EXPR_OK=0, PARSE=1, EVAL=2, INTERNAL=3) must stay
+  in sync between `bridge.cpp` and `__init__.py`.
 - `extern "C"` on all exported bridge functions — removing it breaks ctypes.
