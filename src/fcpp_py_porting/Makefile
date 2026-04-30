@@ -6,16 +6,23 @@ PKG_DIR  := fcpp_py
 LIB_NAME := _fcpp_core
 OBJ_DIR  := build
 
+# Use Rust's LLD if available
+LD_LLD := $(shell ls /c/Users/ottin/.rustup/toolchains/stable-x86_64-pc-windows-msvc/lib/rustlib/x86_64-pc-windows-msvc/bin/gcc-ld/ld.lld.exe 2>/dev/null)
+ifeq ($(LD_LLD),)
+    # Fallback: try system path
+    LD_LLD := ld.lld.exe
+endif
+
 ifeq ($(OS),Windows_NT)
     LIB            := $(PKG_DIR)/$(LIB_NAME).dll
-    LDFLAGS        := -shared -static-libgcc -static-libstdc++ -Wl,--gc-sections
+    LDFLAGS        := -shared -static-libgcc -static-libstdc++ -Wl,--gc-sections -fuse-ld=lld
     WINPTHREAD_DST := $(PKG_DIR)/libwinpthread-1.dll
     PREFIX         := $(if $(MSYSTEM_PREFIX),$(MSYSTEM_PREFIX),/ucrt64)
     RUNTIME_TARGET := $(WINPTHREAD_DST)
     CLEAN_RUNTIME   = rm -f "$(WINPTHREAD_DST)"
 else
     LIB            := $(PKG_DIR)/$(LIB_NAME).so
-    LDFLAGS        := -shared -static-libgcc -static-libstdc++ -Wl,--gc-sections
+    LDFLAGS        := -shared -static-libgcc -static-libstdc++ -Wl,--gc-sections -fuse-ld=lld
     RUNTIME_TARGET :=
     CLEAN_RUNTIME   = :
 endif
@@ -35,7 +42,6 @@ SIM_DEFINES := \
     -DFCPP_PY_COMM=$(COMM) \
     -DFCPP_PY_DIM=$(DIM) \
     -DFCPP_PY_STATE_SIZE=$(STATES)
-
 CXXSTD     ?= c++26
 CXXSTD_SIM ?= c++26
 

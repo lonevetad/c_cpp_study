@@ -150,5 +150,63 @@ class Vec3:          # same + z property
 
 - `fcpp_clone_GITIGNORE_ME/` — read-only; not owned by this project.
 - `extern "C"` on all bridge functions — removing breaks ctypes.
-- Array convention: Vec2 = 2 doubles, Vec3 = 3 doubles — Python and C must agree.
+- Array convention: Vec2 = 2 doubles, Vec3 = 3 doubles, State = STATE_SIZE doubles — Python and C must agree.
 - `static_assert(std::is_same_v<fcpp::real_t, double>)` in bridge — catches fcpp config changes.
+- **LLD linker required**: BFD ld crashes on large COMDAT section tables. Always use `-fuse-ld=lld` on Windows.
+- **C++26 mandatory**: C++20 aggregate rules break fcpp brace-init. Must use C++26 and explicit `vec<N>` specializations in `vec_vararg.hpp`.
+- **vec_vararg.hpp inclusion**: Must be first fcpp include in EVERY translation unit to satisfy ODR.
+
+---
+
+## Phase 2 changes (Simulation bridge)
+
+### New C ABI (simulation.cpp)
+- `fcpp_sim_create()` / `fcpp_sim_destroy()` — lifecycle
+- `fcpp_sim_set_callback(fn)` — register Python callback
+- `fcpp_sim_run(time)` / `fcpp_sim_step()` — execution
+- `fcpp_sim_get_all_states(ids, states, max_n)` — batch device state export
+- `fcpp_sim_device_count()` / `fcpp_sim_get_ids()` — device enumeration
+
+### New Python API (Simulation class)
+```python
+with Simulation() as sim:
+    sim.set_callback(lambda dev_id, t, self_state, nbr_ids, nbr_states: ...)
+    sim.run(2.0)  # or sim.step() for manual stepping
+    ids, states = sim.get_all_states()
+```
+
+### Build changes
+- `CXXFLAGS_SIM` uses `-Os -ffunction-sections -fdata-sections` (size optimization + dead-code elimination)
+- `LDFLAGS` includes `-fuse-ld=lld -Wl,--gc-sections` (LLD linker + gc sections)
+- Split builds: bridge.cpp (fast, `-Wall -Wextra`) vs simulation.cpp (slow fcpp templates, no warnings)
+
+### Compile-time params now overridable
+```bash
+mingw32-make DEVICES=50 SIDE=100 COMM=30 all
+```
+
+### Known blocker (RESOLVED)
+- **Issue**: `ld returned 5` when linking simulation.o — linker crash on large COMDAT section table
+- **Root cause**: fcpp templates generate hundreds of COMDAT sections; BFD ld crashes
+- **Fix**: LLD linker (`-fuse-ld=lld`) handles large COMDAT tables
+- **Install**: `pacman -S mingw-w64-ucrt-x86_64-lld` (Windows MSYS2)
+
+### C++20 aggregate-init fix (RESOLVED)
+- **Issue**: fcpp's brace-init `vec<N>{a, b, c}` fails in C++20+ (user-declared ctors prevent aggregates)
+- **Fix**: Explicit template specializations in `vec_vararg.hpp` with element-wise constructors
+- **Why**: Can't downgrade to C++17 (user requirement: stay C++26)
+- **ODR**: Both bridge.cpp and simulation.cpp include `vec_vararg.hpp` first
+
+---
+
+## Test results
+
+**Phase 1 (Vec2/Vec3):**
+```
+55 passed in 0.40s   (Python 3.14.0, pytest 9.0.3)
+```
+
+**Phase 2 (Simulation):** Ready to run after LLD build succeeds
+- ~20 tests covering: create/destroy, callback, state access, timing, error handling, integration
+- Run: `python -m pytest tests/test_simulation.py -v`
+
