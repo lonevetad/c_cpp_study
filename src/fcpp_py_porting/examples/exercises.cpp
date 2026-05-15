@@ -43,6 +43,8 @@ namespace option { // CONSTANTS
     constexpr real_t maximum_movement_step = static_cast<real_t>(network_width + network_height) / 40;
     //! @brief 
     constexpr real_t period_between_bounces = 10.0;
+
+    constexpr bool is_bouncing_randomly = false;
 }
 
 
@@ -66,7 +68,16 @@ namespace tags {
     // (if self is connected to A and B, self sees 3 devices, A sees 7 and B sees 2,
     // -> this attribute will store the value 7)
     struct node_max_connections_on_neighbours {};
+    
+    // 2)
+    struct node_max_nbr_amount {};
+    
+    // 3)
+    struct node_max_nbr_ever {};
 
+    /*
+    for debugging the bouncing
+    */
     struct node_bounce_side {};
     struct node_bounce_x {};
     struct node_bounce_y {};
@@ -369,18 +380,46 @@ MAIN() {
     });
 
     // 2)
+    int max_nbr_amount = old(CALL, 0, [&](int a){  // old with initial value and update function
+        return max(a, nbr_amount);
+    });
+    node.storage(node_max_nbr_amount{}) = max_nbr_amount;
     
     // 3)
     // NOTES: may use the "gossip": share the current "maximum", gather the "maximum" from neighbours, "accumulate" the maximal value and then update the "maximum" with the accumulated result
+    int max_nbr_ever = old(CALL, 0, [&](int a){  // old with initial value and update function
+        return max(a,
+            nbr(CALL, a, [&](field<int> a){ // nbr with initial value and update function
+                return max_hood(CALL, a, nbr_amount);
+            })
+        );
+    });
+    node.storage(node_max_nbr_ever{}) = max_nbr_ever;
 
-
+    if constexpr (is_bouncing_randomly){
+        auto side_dest = random_bounce(CALL);
+        node.storage(node_bounce_side{}) = get<0>(side_dest);
+        node.storage(node_bounce_x{}) = static_cast<int>(get<1>(side_dest)[0]);
+        node.storage(node_bounce_y{}) = static_cast<int>(get<1>(side_dest)[1]);
+    } else {
+        // 4)
+        /* TODO:
+        - requires a "nbr" passing a tuple of the ID (for debugging), the nbr_amount and the current position
+        - then, get the maximum (maxhood with a comparator, somehow?)
+        - if the ID != self's ID, then "follow_target" up until ... ool hit = dist <= option::maximum_movement_step;
+        - ->
+            real_t dist = follow_target(CALL,
+                get<2>(most_crowded_device_in_neighborhood),
+                static_cast<real_t>(option::maximum_movement_step),
+                static_cast<real_t>(option::period_between_bounces)
+            );
+            // WAIT ... is dist REALLY useful?
+        */
+    }
+    
 
     // usage of node physics
     //node.velocity() = -node.position()/communication_range;
-    auto side_dest = random_bounce(CALL);
-    node.storage(node_bounce_side{}) = get<0>(side_dest);
-    node.storage(node_bounce_x{}) = static_cast<int>(get<1>(side_dest)[0]);
-    node.storage(node_bounce_y{}) = static_cast<int>(get<1>(side_dest)[1]);
 
     // usage of node storage
     node.storage(node_size{}) = 10;
@@ -441,12 +480,14 @@ using store_t = tuple_store<
     node_shape,                 shape
     //
     , node_rounds_done,         int
-    , node_nbr_amount,          int
+    , node_nbr_amount,          int // 1)
     , node_max_connections_on_neighbours, int
+    , node_max_nbr_amount,      int // 2)
+    , node_max_nbr_ever,        int // 3)
 
     , node_bounce_side,         int
-    , node_bounce_x,          int
-    , node_bounce_y, int
+    , node_bounce_x,            int
+    , node_bounce_y,            int
 >;
 //! @brief The tags and corresponding aggregators to be logged (change as needed).
 using aggregator_t = aggregators<
@@ -488,7 +529,7 @@ DECLARE_OPTIONS(list,
 //! @brief The main function.
 int main() {
     using namespace fcpp;
-
+    
     //! @brief The network object type (interactive simulator with given options).
     using net_t = component::interactive_simulator<option::list>::net;
     //! @brief The initialisation values (simulation name).
@@ -499,3 +540,5 @@ int main() {
     network.run();
     return 0;
 }
+
+// ./make.sh gui run -O exercises
