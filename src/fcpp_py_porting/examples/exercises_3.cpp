@@ -162,8 +162,6 @@ FUN side_and_point_t random_point_on_side(
     throw std::runtime_error("Unkown side");
 }
 
-
-
 // [AGGREGATE PROGRAM]
 
 /**
@@ -295,112 +293,6 @@ FUN side_and_point_t random_bounce(ARGS) { CODE
 }
 FUN_EXPORT random_bounce_t = export_list<side_and_point_t>;
 
-/*
-FUN std::unique_ptr<side_and_point_t> random_point_on_side(
-        ARGS,
-        Side current_side,
-        int max_width,
-        int max_height
-    ){
-    int current_side_int = static_cast<int>(current_side);
-    switch(current_side){
-        case(Side::TOP): {
-            return std::make_unique<side_and_point_t>(
-                make_tuple(
-                    current_side_int,
-                    vec<option::dim>(node.next_int(max_width), 0)
-                )
-            );
-        }
-        case(Side::RIGHT): {
-            return std::make_unique<side_and_point_t>(
-                make_tuple(
-                    current_side_int,
-                    vec<option::dim>(max_width, node.next_int(max_height))
-                )
-            );
-        }
-        case(Side::BOTTOM): {
-            return std::make_unique<side_and_point_t>(
-                make_tuple(
-                    current_side_int,
-                    vec<option::dim>(node.next_int(max_width), max_height)
-                )
-            );
-        }
-        case(Side::LEFT): {
-            return std::make_unique<side_and_point_t>(
-                make_tuple(
-                    current_side_int,
-                    vec<option::dim>(0, node.next_int(max_height))
-                )
-            );
-        }
-    }
-}
-
-
-FUN std::unique_ptr<side_and_point_t> random_bounce(ARGS) { CODE
-    return old(CALL,
-        std::move(
-            random_point_on_side( // starting destination
-                CALL,
-                node.next_int(3),
-                option::network_width,
-                option::network_height
-            )
-        ),
-        [&](std::unique_ptr<side_and_point_t> current_side_destination) {
-            // approach the target, then change direction if needed
-            real_t dist = follow_target(CALL, get<1>(current_side_destination), option::period_between_bounces);
-            bool bounced = dist <= option::maximum_movement_step;
-            return bounced ?
-                random_point_on_side( // new destination
-                    CALL,
-                    new_random_side(
-                        CALL,
-                        static_cast<Side>(get<0>(current_side_destination))
-                    ),
-                    option::network_width,
-                    option::network_height
-                )
-                : std::move(current_side_destination)
-            ;
-        }
-    );
-}
-FUN_EXPORT random_bounce_t = export_list<std::unique_ptr<side_and_point_t>>;
-
-*/
-
-// es 4)
-// a.k.a. chase_nbr_most_alone
-FUN node_nbr_data_t es_4 (ARGS, 
-    int nbr_amount, // pre-calculated, otherwise: " count_hood(CALL) - 1; "
-    )
-    { CODE
-    node_nbr_data_t loneliest = nbr(CALL,
-        make_tuple(nbr_amount, node.uid, node.position()),
-        [&](field<int> a){ // nbr with initial value and update function
-            // TODO    
-            return max_hood(CALL, a, nbr_amount);
-        }
-    );
-     /* TODO:
-        - requires a "nbr" passing a tuple of the ID (for debugging), the nbr_amount and the current position
-        - then, get the maximum (maxhood with a comparator, somehow?)
-        - if the ID != self's ID, then "follow_target" up until ... ool hit = dist <= option::maximum_movement_step;
-        - ->
-            real_t dist = follow_target(CALL,
-                get<2>(most_crowded_device_in_neighborhood),
-                static_cast<real_t>(option::maximum_movement_step),
-                static_cast<real_t>(option::period_between_bounces)
-            );
-            // WAIT ... is dist REALLY useful?
-        */
-}
-FUN_EXPORT es_4_t = export_list<node_nbr_data_t>;
-
 
 // @brief Main function.
 MAIN() {
@@ -449,21 +341,10 @@ MAIN() {
     });
     node.storage(node_max_nbr_ever{}) = max_nbr_ever;
 
-    if constexpr (is_bouncing_randomly){
-        auto side_dest = random_bounce(CALL);
-        node.storage(node_bounce_side{}) = get<0>(side_dest);
-        node.storage(node_bounce_x{}) = static_cast<int>(get<1>(side_dest)[0]);
-        node.storage(node_bounce_y{}) = static_cast<int>(get<1>(side_dest)[1]);
-    } else {
-        // 4)
-        node_nbr_data_t lonelienest_nbr_to_chase_data = es_4(CALL);
-
-        node.storage(node_nbr_loneliness{})     = std::static_cast<int>(             get<0>(lonelienest_nbr_to_chase_data));
-        node.storage(node_nbr_loneliest_id{})   = std::static_cast<device_t>(        get<1>(lonelienest_nbr_to_chase_data));
-        vec<option::dim> nbr_loneliest_position = std::static_cast<vec<option::dim>>(get<2>(lonelienest_nbr_to_chase_data));
-        node.storage(node_nbr_loneliest_x{})    = nbr_loneliest_position[0];
-        node.storage(node_nbr_loneliest_y{})    = nbr_loneliest_position[1];
-    }
+    auto side_dest = random_bounce(CALL);
+    node.storage(node_bounce_side{}) = get<0>(side_dest);
+    node.storage(node_bounce_x{}) = static_cast<int>(get<1>(side_dest)[0]);
+    node.storage(node_bounce_y{}) = static_cast<int>(get<1>(side_dest)[1]);
     
 
     // usage of node physics

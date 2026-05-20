@@ -163,47 +163,10 @@ FUN side_and_point_t random_point_on_side(
 }
 
 
-
-// [AGGREGATE PROGRAM]
-
 /**
  * BASE EXERCISES:
  *
- * Expand the MAIN function below to compute the following:
- *
- * 1)    The number of neighbour devices.
- *
- * 2)    The maximum number of neighbour devices ever witnessed by the current device.
- *
- * 3)    The maximum number of neighbour devices ever witnessed by any device in the network.
- *
  * 4)    Move towards the neighbour with the lowest number of neighbors.
- *
- * Every exercise above is designed to help solving the following one.
- *
- *
- * SIMULATION PHYSICS:
- *
- * 5)    Move away from the neighbour with the highest number of neighbors.
- *
- * 6)    Move as if the device was attracted by the neighbour with the lowest number of neighbors,
- *       and repulsed by the neighbour with the highest number of neighbors.
- *
- * 7)    Move as if the device was repulsed by every neighbour, and by the four walls of the
- *       rectangular box between points [0,0] and [500,500].
- *
- *
- * COMBINING SPATIAL COMPUTING BLOCKS:
- *
- * 8)   Select a node called "source", chosen by finding the node with minimum uid 
- *      in the network, assuming that the diameter of the network is no more than 10 hops.
- *
- * 9)   Compute the distances between any node and the "source" using the adaptive bellman-ford algorithm.
- *
- * 10)  Calculate in the source an estimate of the true diameter of the network
- *      (the maximum distance of a device in the network).
- *
- * 11)  Broadcast the diameter to every node in the network.
  *
  *
  * RUNTIME MONITORING:
@@ -212,20 +175,6 @@ FUN side_and_point_t random_point_on_side(
  * - the node(s) identified as "source" in exercise (8) are Internet Gateways (gateway),
  * - a node is at risk of disconnection (disrisk) iff it has less than three neighbors,
  * monitor the following properties:
- * 
- * 12)  You (the current device) have never been at disrisk.
- * 
- * 13)  In the network, there exists a node that has never been at disrisk.
- * 
- * 14)  You (the current device) can always reach a gateway through nodes that are not at disrisk.
- * 
- * 15)  You (the current device) can always reach a gateway through nodes that have never been at disrisk.
- * 
- * In order to check whether what you computed is correct, you may display the computed
- * quantities as node qualities through tags `node_color`, `node_size` and `node_shape`.
- * You can also save your computed quantities in additional specific node attributes:
- * towards this end, you should both add a tag in namespace tags above, then list it
- * (together with the corresponding data type) in the `tuple_store` option below.
  *
  * HINTS:
  *
@@ -370,7 +319,6 @@ FUN std::unique_ptr<side_and_point_t> random_bounce(ARGS) { CODE
     );
 }
 FUN_EXPORT random_bounce_t = export_list<std::unique_ptr<side_and_point_t>>;
-
 */
 
 // es 4)
