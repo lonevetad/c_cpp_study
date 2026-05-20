@@ -18,7 +18,18 @@ namespace fcpp {
 
 //! @brief Dummy ordering between positions (allows positions to be used as secondary keys in ordered tuples).
 template <size_t n>
-bool operator<(vec<n> const&, vec<n> const&) {
+bool operator<(vec<n> const& v1, vec<n> const& v2) {
+    int i = 0;
+    while(i < n){
+        auto e1 = v1[i];
+        auto e2 = v2[i]; 
+        if(e1 > e2){
+            return false;
+        } else if(e1 < e2){
+            return true;
+        } // else: identical
+        i++;
+    }
     return false;
 }
 
@@ -62,12 +73,12 @@ namespace tags {
     struct node_rounds_done {};
     
     // 1) # o neighbour
-    //! @brief count the amount of neighbours.
+    //! @brief count the amount of neighbors.
     struct node_nbr_amount {};
-    //! @brief count the maximum amount of neighbours across self and all ouf neighbours.
+    //! @brief count the maximum amount of neighbors across self and all ouf neighbors.
     // (if self is connected to A and B, self sees 3 devices, A sees 7 and B sees 2,
     // -> this attribute will store the value 7)
-    struct node_max_connections_on_neighbours {};
+    struct node_max_connections_on_neighbors {};
     
     // 2)
     struct node_max_nbr_amount {};
@@ -75,16 +86,25 @@ namespace tags {
     // 3)
     struct node_max_nbr_ever {};
 
+    // 4)
+    struct node_nbr_loneliness {};
+    struct node_nbr_loneliest_id {};
+    struct node_nbr_loneliest_x {};
+    struct node_nbr_loneliest_y {};
+
     /*
     for debugging the bouncing
     */
     struct node_bounce_side {};
     struct node_bounce_x {};
     struct node_bounce_y {};
-}
+} 
 
 //! @brief The maximum communication range between nodes.
 constexpr size_t communication_range = 100;
+
+using node_nbr_data_t = tuple<int, device_t, vec<option::dim>>;
+
 
 enum Side {
     TOP = 0,
@@ -199,17 +219,17 @@ FUN std::unique_ptr<side_and_point_t> random_point_on_side(
  *
  * 3)    The maximum number of neighbour devices ever witnessed by any device in the network.
  *
- * 4)    Move towards the neighbour with the lowest number of neighbours.
+ * 4)    Move towards the neighbour with the lowest number of neighbors.
  *
  * Every exercise above is designed to help solving the following one.
  *
  *
  * SIMULATION PHYSICS:
  *
- * 5)    Move away from the neighbour with the highest number of neighbours.
+ * 5)    Move away from the neighbour with the highest number of neighbors.
  *
- * 6)    Move as if the device was attracted by the neighbour with the lowest number of neighbours,
- *       and repulsed by the neighbour with the highest number of neighbours.
+ * 6)    Move as if the device was attracted by the neighbour with the lowest number of neighbors,
+ *       and repulsed by the neighbour with the highest number of neighbors.
  *
  * 7)    Move as if the device was repulsed by every neighbour, and by the four walls of the
  *       rectangular box between points [0,0] and [500,500].
@@ -232,7 +252,7 @@ FUN std::unique_ptr<side_and_point_t> random_point_on_side(
  * 
  * Given that:
  * - the node(s) identified as "source" in exercise (8) are Internet Gateways (gateway),
- * - a node is at risk of disconnection (disrisk) iff it has less than three neighbours,
+ * - a node is at risk of disconnection (disrisk) iff it has less than three neighbors,
  * monitor the following properties:
  * 
  * 12)  You (the current device) have never been at disrisk.
@@ -252,7 +272,7 @@ FUN std::unique_ptr<side_and_point_t> random_point_on_side(
  * HINTS:
  *
  * -    In the first few exercises, start by reasoning on when/where to use `nbr` (collecting from
- *      neighbours) and `old` (collecting from the past).
+ *      neighbors) and `old` (collecting from the past).
  *
  * -    In order to move a device, you need to set a velocity vector through something like
  *      `node.velocity() = make_vec(0,0)`.
@@ -349,6 +369,34 @@ FUN std::unique_ptr<side_and_point_t> random_bounce(ARGS) { CODE
 FUN_EXPORT random_bounce_t = export_list<std::unique_ptr<side_and_point_t>>;
 */
 
+// es 4)
+// a.k.a. chase_nbr_most_alone
+FUN node_nbr_data_t es_4 (ARGS, 
+    int nbr_amount, // pre-calculated, otherwise: " count_hood(CALL) - 1; "
+    )
+    { CODE
+    node_nbr_data_t loneliest = nbr(CALL,
+        make_tuple(nbr_amount, node.uid, node.position()),
+        [&](field<int> a){ // nbr with initial value and update function
+            // TODO    
+            return max_hood(CALL, a, nbr_amount);
+        }
+    );
+     /* TODO:
+        - requires a "nbr" passing a tuple of the ID (for debugging), the nbr_amount and the current position
+        - then, get the maximum (maxhood with a comparator, somehow?)
+        - if the ID != self's ID, then "follow_target" up until ... ool hit = dist <= option::maximum_movement_step;
+        - ->
+            real_t dist = follow_target(CALL,
+                get<2>(most_crowded_device_in_neighborhood),
+                static_cast<real_t>(option::maximum_movement_step),
+                static_cast<real_t>(option::period_between_bounces)
+            );
+            // WAIT ... is dist REALLY useful?
+        */
+}
+FUN_EXPORT es_4_t = export_list<node_nbr_data_t>;
+
 
 // @brief Main function.
 MAIN() {
@@ -369,13 +417,14 @@ MAIN() {
     int nbr_amount = count_hood(CALL) - 1;
 
     // 1.2 
-    /*int max_connections_on_neighbours = nbr(CALL, 0, [&](field<int> a){ // nbr with initial value and update function
+    /*
+    int max_connections_on_neighbors = nbr(CALL, 0, [&](field<int> a){ // nbr with initial value and update function
         return max_hood(CALL, a, nbr_amount);
     });
     */
-    int max_connections_on_neighbours = 0;
+    int max_connections_on_neighbors = 0;
     nbr(CALL, 0, [&](field<int> a){ // nbr with initial value and update function
-        max_connections_on_neighbours = max_hood(CALL, a, nbr_amount);
+        max_connections_on_neighbors = max_hood(CALL, a, nbr_amount);
         return nbr_amount;
     });
 
@@ -386,7 +435,7 @@ MAIN() {
     node.storage(node_max_nbr_amount{}) = max_nbr_amount;
     
     // 3)
-    // NOTES: may use the "gossip": share the current "maximum", gather the "maximum" from neighbours, "accumulate" the maximal value and then update the "maximum" with the accumulated result
+    // NOTES: may use the "gossip": share the current "maximum", gather the "maximum" from neighbors, "accumulate" the maximal value and then update the "maximum" with the accumulated result
     int max_nbr_ever = old(CALL, 0, [&](int a){  // old with initial value and update function
         return max(a,
             nbr(CALL, a, [&](field<int> a){ // nbr with initial value and update function
@@ -403,18 +452,13 @@ MAIN() {
         node.storage(node_bounce_y{}) = static_cast<int>(get<1>(side_dest)[1]);
     } else {
         // 4)
-        /* TODO:
-        - requires a "nbr" passing a tuple of the ID (for debugging), the nbr_amount and the current position
-        - then, get the maximum (maxhood with a comparator, somehow?)
-        - if the ID != self's ID, then "follow_target" up until ... ool hit = dist <= option::maximum_movement_step;
-        - ->
-            real_t dist = follow_target(CALL,
-                get<2>(most_crowded_device_in_neighborhood),
-                static_cast<real_t>(option::maximum_movement_step),
-                static_cast<real_t>(option::period_between_bounces)
-            );
-            // WAIT ... is dist REALLY useful?
-        */
+        node_nbr_data_t lonelienest_nbr_to_chase_data = es_4(CALL);
+
+        node.storage(node_nbr_loneliness{})     = std::static_cast<int>(             get<0>(lonelienest_nbr_to_chase_data));
+        node.storage(node_nbr_loneliest_id{})   = std::static_cast<device_t>(        get<1>(lonelienest_nbr_to_chase_data));
+        vec<option::dim> nbr_loneliest_position = std::static_cast<vec<option::dim>>(get<2>(lonelienest_nbr_to_chase_data));
+        node.storage(node_nbr_loneliest_x{})    = nbr_loneliest_position[0];
+        node.storage(node_nbr_loneliest_y{})    = nbr_loneliest_position[1];
     }
     
 
@@ -425,10 +469,10 @@ MAIN() {
     node.storage(node_size{}) = 10;
     auto const hue_scale = 360.0f / option::node_num;
     /**
-    If current device has the greatest amount of connections across itself and its neighbours, then it's a local peak (local maxima).
+    If current device has the greatest amount of connections across itself and its neighbors, then it's a local peak (local maxima).
     It's like having the derivative equal to 0.
     */
-    bool is_a_peak = (nbr_amount == max_connections_on_neighbours);
+    bool is_a_peak = (nbr_amount == max_connections_on_neighbors);
     node.storage(node_color{}) = 
         /*is_a_peak
         ? color(PURPLE)
@@ -441,7 +485,7 @@ MAIN() {
     node.storage(node_rounds_done{}) = rounds_done;
     // 1)
     node.storage(node_nbr_amount{}) = nbr_amount;
-    node.storage(node_max_connections_on_neighbours{}) = max_connections_on_neighbours;
+    node.storage(node_max_connections_on_neighbors{}) = max_connections_on_neighbors;
     
 
     // 2)
@@ -481,9 +525,15 @@ using store_t = tuple_store<
     //
     , node_rounds_done,         int
     , node_nbr_amount,          int // 1)
-    , node_max_connections_on_neighbours, int
+    , node_max_connections_on_neighbors, int
     , node_max_nbr_amount,      int // 2)
     , node_max_nbr_ever,        int // 3)
+    // 4)
+    , node_nbr_loneliness,      int
+    , node_nbr_loneliest_id,    device_t
+    , node_nbr_loneliest_x,     double
+    , node_nbr_loneliest_y,     double
+    // 5)
 
     , node_bounce_side,         int
     , node_bounce_x,            int
