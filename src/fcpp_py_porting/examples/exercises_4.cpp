@@ -10,12 +10,14 @@
 // [INTRODUCTION]
 //! Importing the FCPP library.
 #include "lib/fcpp.hpp"
+#include "run/shared.hpp"
 
 /**
  * @brief Namespace containing all the objects in the FCPP library.
  */
 namespace fcpp {
 
+/*
 //! @brief Dummy ordering between positions (allows positions to be used as secondary keys in ordered tuples).
 template <size_t n>
 bool operator<(vec<n> const& v1, vec<n> const& v2) {
@@ -32,6 +34,7 @@ bool operator<(vec<n> const& v1, vec<n> const& v2) {
     }
     return false;
 }
+*/
 
 //! @brief Namespace containing the libraries of coordination routines.
 namespace coordination {
@@ -41,7 +44,7 @@ namespace coordination {
 //! @brief Namespace for component options.
 namespace option { // CONSTANTS
     //! @brief Number of people in the area.
-    constexpr int node_num = 100;
+    constexpr int node_num = 7; //100;
 
     //! @brief Dimensionality of the space.
     constexpr size_t dim = 2;
@@ -443,7 +446,7 @@ MAIN() {
     // 2)
 }
 //! @brief Export types used by the main function (update it when expanding the program).
-FUN_EXPORT main_t = export_list<double, int, monitor_t, random_bounce_t>;
+FUN_EXPORT main_t = export_list<double, int, monitor_t, random_bounce_t, es_4_t>;
 
 } // namespace coordination
 

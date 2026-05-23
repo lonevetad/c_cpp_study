@@ -30,3 +30,18 @@ if(WIN32)
         OpenGL::GL
     )
 endif()
+
+
+
+
+# target declaration
+#fcpp_target(./run/exercises.cpp ON)
+#set(ALL_TARGETS
+#    exercises
+#    exercises_1_mountains_peaks
+#    exercises_3
+#    exercises_4
+#)
+#foreach(src_targets ${ALL_TARGETS})
+#    fcpp_target(./run/${src_targets}.cpp ON)
+#endforeach()

@@ -10,6 +10,7 @@
 // [INTRODUCTION]
 //! Importing the FCPP library.
 #include "lib/fcpp.hpp"
+#include "run/random_bounce.hpp"
 
 /**
  * @brief Namespace containing all the objects in the FCPP library.
@@ -54,8 +55,6 @@ namespace option { // CONSTANTS
     constexpr real_t maximum_movement_step = static_cast<real_t>(network_width + network_height) / 40;
     //! @brief 
     constexpr real_t period_between_bounces = 10.0;
-
-    constexpr bool is_bouncing_randomly = false;
 }
 
 
@@ -92,12 +91,6 @@ namespace tags {
     struct node_nbr_loneliest_x {};
     struct node_nbr_loneliest_y {};
 
-    /*
-    for debugging the bouncing
-    */
-    struct node_bounce_side {};
-    struct node_bounce_x {};
-    struct node_bounce_y {};
 } 
 
 //! @brief The maximum communication range between nodes.
@@ -105,62 +98,6 @@ constexpr size_t communication_range = 100;
 
 using node_nbr_data_t = tuple<int, device_t, vec<option::dim>>;
 
-
-enum Side {
-    TOP = 0,
-    RIGHT,
-    BOTTOM,
-    LEFT
-};
-
-FUN int new_random_side(ARGS, Side current_side){
-    int s = static_cast<int>(current_side);
-    int next_side = 0;
-    do {
-        next_side = node.next_int(3);
-    } while(next_side == s);
-    return next_side;
-}
-
-using side_and_point_t = tuple<int, vec<option::dim>>; // side, x, y
-
-//! @brief return a side_and_point_t, with the current side and a random point lined up on that side
-FUN side_and_point_t random_point_on_side(
-        ARGS,
-        int current_side_int,
-        const int& max_width,
-        const int& max_height
-    ){
-    Side current_side = static_cast<Side>(current_side_int);
-    switch(current_side){
-        case(Side::TOP): {
-            return make_tuple(
-                current_side_int,
-                vec<option::dim>{static_cast<real_t>(node.next_int(max_width)), 0.0}
-            );
-        }
-        case(Side::RIGHT): {
-            return make_tuple(
-                current_side_int,
-                vec<option::dim>{static_cast<real_t>(max_width), static_cast<real_t>(node.next_int(max_height))}
-            );
-        }
-        case(Side::BOTTOM): {
-            return make_tuple(
-                current_side_int,
-                vec<option::dim>{static_cast<real_t>(node.next_int(max_width)), static_cast<real_t>(max_height)}
-            );
-        }
-        case(Side::LEFT): {
-            return make_tuple(
-                current_side_int,
-                vec<option::dim>{0.0, static_cast<real_t>(node.next_int(max_height))}
-            );
-        }
-    }
-    std::cout << "what side is this? " << current_side_int << std::endl;
-    throw std::runtime_error("Unkown side");
-}
 
 // [AGGREGATE PROGRAM]
 
@@ -255,44 +192,6 @@ FUN bool recent_dis_monitor(ARGS, bool disrisk) { CODE
 }
 FUN_EXPORT monitor_t = export_list<past_ctl_t, slcs_t>;
 
-/**
-!@brief randomly moves the nodes every K turns
-*/
-FUN side_and_point_t random_bounce(ARGS) { CODE
-    return old(CALL,
-        //std::move(
-            random_point_on_side( // starting destination
-                CALL,
-                node.next_int(3),
-                option::network_width,
-                option::network_height
-        //    )
-        ),
-        [&](side_and_point_t const& current_side_destination) {
-            // approach the target, then change direction if needed
-            real_t dist = follow_target(CALL,
-                get<1>(current_side_destination),
-                static_cast<real_t>(option::maximum_movement_step),
-                static_cast<real_t>(option::period_between_bounces)
-            );
-            bool bounced = dist <= option::maximum_movement_step;
-            return bounced ?
-                random_point_on_side( // new destination
-                    CALL,
-                    static_cast<Side>(new_random_side(
-                        CALL,
-                        static_cast<Side>(get<0>(current_side_destination))
-                    )),
-                    option::network_width,
-                    option::network_height
-                )
-                : current_side_destination
-            ;
-        }
-    );
-}
-FUN_EXPORT random_bounce_t = export_list<side_and_point_t>;
-
 
 // @brief Main function.
 MAIN() {
@@ -341,11 +240,6 @@ MAIN() {
     });
     node.storage(node_max_nbr_ever{}) = max_nbr_ever;
 
-    auto side_dest = random_bounce(CALL);
-    node.storage(node_bounce_side{}) = get<0>(side_dest);
-    node.storage(node_bounce_x{}) = static_cast<int>(get<1>(side_dest)[0]);
-    node.storage(node_bounce_y{}) = static_cast<int>(get<1>(side_dest)[1]);
-    
 
     // usage of node physics
     //node.velocity() = -node.position()/communication_range;
@@ -376,7 +270,7 @@ MAIN() {
     // 2)
 }
 //! @brief Export types used by the main function (update it when expanding the program).
-FUN_EXPORT main_t = export_list<double, int, monitor_t, random_bounce_t>;
+FUN_EXPORT main_t = export_list<double, int, monitor_t>;
 
 } // namespace coordination
 
