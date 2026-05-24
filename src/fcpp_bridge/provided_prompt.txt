@@ -56,3 +56,34 @@ Perform these refactorings (accounting for all Phases):
 
 Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
 
+
+
+
+
+Refactor the Python code to separate the classes definition in a file each, such that:
+- all files not named  "__init__.py" will become a separate package (with its own "__init__.py" file and relevant imports / exports) containing one file per class
+- all "__init__.py" will import / export all classes (one file each) that are currently defined in it.
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) me+-mory.
+
+
+
+
+Now perform a refacting similar to the last one, but applied to all Phases (especially the C++ transpilation) and save the memory and a ".md" journal to both annotate the completition status of the process while the latter goes on and to facilitate its resume (in case I hit the session rate limit or the PC shuts down).
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+
+
+
+Why the Phase 7 is marked as a "Future Work"? What could be missing?
+
+
+
+The following is another huge process: save each step (eventually, by updating a dedicated ".md" file) to allow the process to be interrupted and resumed at any time.
+Collect all C++ source files containing examples of usages of the FCPP library (usually, they are implementations of high-level / complex algorithms, rather than just learning-focused examples); in particular, look into the following folders:
+- "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src/fcpp_py_porting/examples"
+- "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src/fcpp_py_porting/fcpp_clone_GITIGNORE_ME/fcpp-exercises"
+- "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src/fcpp_py_porting/fcpp_clone_GITIGNORE_ME/fcpp-sample-project" and "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src/fcpp_py_porting/fcpp_clone_GITIGNORE_ME/fcpp-sample-project" (they contain linked source files)
+Inside this project's "examples" folder (located at the path "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src/fcpp_bridge/examples"), create Python source files that could re-create those C++ source files by using the "fcpp_bridge" project We created. These Python files are made for demonstration and learning purposes, so add explanatory comments too.
+The data that "Python" would receive from the generated-and-compiled C++ sources will be saved as log files, one for each node in the swarm (use each node's id as part of the log's filename, one for each node).
+It is mandatory that, for each C++ source file taken into account, the generated "main function" should call each aggregate function in the same manner and order as the respective original C++ source file: the functionality and algorithm must be the same.
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+

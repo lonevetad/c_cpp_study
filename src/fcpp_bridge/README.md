@@ -7,7 +7,7 @@ Production-ready bridge between Python and FCPP (Field Calculus C++14 framework)
 ```bash
 cd <repo-root>
 PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -v
-# 432 pass, 0 fail
+# 482 pass, 0 fail
 ```
 
 ## Overview
@@ -58,20 +58,67 @@ Statistics / JSON / CSV export
 
 ## File Structure
 
+Each sub-package follows a **one-file-per-class** layout. Every `__init__.py` re-exports all public names so existing import paths remain unchanged.
+
 ```
 fcpp_bridge/
-├── python_dsl/         Phase 1: DSL primitives & decorators
-├── transpiler/         Phase 2: Python → C++ code generation
-├── compiler/           Phase 3: Build pipeline & caching
-├── runtime/            Phase 4: C++ runtime library (generated headers)
-├── ipc/                Phase 4B: Communication backends
-├── grammar/            Phase 5: Language parser (recursive-descent + ANTLR gen)
-├── metrics/            Phase 6: Metrics collection & export
-├── visualization/      Phase 7: Live / replay GUI plugin
-├── examples/           Demo programs
-├── tests/              Pytest test suite (395 tests)
-├── cpp_transpiled/     ← Generated C++ code (git-ignored)
-└── build/              ← Compiled binaries (git-ignored)
+├── python_dsl/             Phase 1: DSL primitives & decorators
+│   ├── primitives/         64 primitive classes (one .py each) + Primitive base
+│   ├── types/              CppType, 14 proxy classes, TemplateParam, AggregateType
+│   ├── validators/         ValidationError, ValidationRule ABC, 5 rule classes,
+│   │                       ValidationPipeline, AggregateValidator
+│   └── decorators/         6 _Mixin* classes + aggregate_function / mixin_* decorators
+├── transpiler/             Phase 2: Python → C++ code generation
+│   ├── transpilation_error.py
+│   ├── cpp_code_builder.py
+│   ├── python_ast_visitor.py
+│   ├── transpiler_core.py
+│   └── _constants.py       _FCPP_PRIMITIVES dict (shared by visitor + transpiler)
+├── compiler/               Phase 3: Build pipeline & caching
+│   ├── compilation_error.py
+│   ├── compilation_result.py
+│   ├── program_cache.py
+│   ├── compiler_core.py
+│   ├── cmake_generator.py
+│   ├── compilation_diagnostic.py
+│   └── compilation_error_parser.py
+├── runtime/                Phase 4: C++ runtime library (generated headers)
+│   └── runtime_generator.py
+├── ipc/                    Phase 4B: Communication backends
+│   ├── node_state.py
+│   ├── swarm_snapshot.py
+│   ├── ipc_backend.py
+│   ├── unix_socket_backend.py
+│   ├── http_backend.py
+│   ├── grpc_backend.py
+│   ├── swarm_process.py
+│   └── device_manager.py
+├── grammar/                Phase 5: Language parser (recursive-descent + ANTLR gen)
+│   ├── ast_node.py
+│   ├── parser_error.py
+│   ├── aggregate_language_parser.py   (+ ast_to_dsl function)
+│   └── antlr_parser.py
+├── metrics/                Phase 6: Metrics collection & export
+│   ├── metric_point.py
+│   ├── metrics_summary.py
+│   ├── state_history.py
+│   └── metrics_collector.py
+├── visualization/          Phase 7: Live / replay GUI plugin
+│   ├── visualizer_base.py
+│   ├── text_dashboard.py
+│   └── swarm_visualizer.py
+├── log.py                  Flexible logging (no classes; used by all sub-packages)
+├── examples/               Demo programs
+├── tests/                  Pytest test suite (482 tests, one sub-package per phase)
+│   ├── dsl/                Phase 1 tests (6 files)
+│   ├── transpiler/         Phase 2 tests (3 files)
+│   ├── compiler/           Phase 3 tests (3 files)
+│   ├── ipc/                Phase 4 tests (4 files)
+│   ├── grammar/            Phase 5 tests (5 files)
+│   ├── metrics/            Phase 6 tests (6 files)
+│   └── visualization/      Phase 7 tests (4 files)
+├── cpp_transpiled/         ← Generated C++ code (git-ignored)
+└── build/                  ← Compiled binaries (git-ignored)
 ```
 
 ## Documentation
