@@ -120,7 +120,9 @@ Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
 
 The following is another huge process: save each step (eventually, by updating a dedicated ".md" file) to allow the process to be interrupted and resumed at any time.
 
-Write a "TUTORIAL_simple.md" file and a "TUTORIAL_in_depth.md" file to explain, respectively, a simple usage of the "fcpp_bridge" library for learning purposes and a very advanced and customizable usage of the library meant primarily for production and professional purposes (even deployment into physical node-devices ).
+First, refactor the "listener_proxy.py" such that the "mode" is an enum (described in a dedicated source file) rather than a string.
+
+Secondly, write a "TUTORIAL_simple.md" file and a "TUTORIAL_in_depth.md" file to explain, respectively, a simple usage of the "fcpp_bridge" library for learning purposes and a very advanced and customizable usage of the library meant primarily for production and professional purposes (even deployment into physical node-devices ).
 
 Here follows the details of the "TUTORIAL_simple":
 - it should both provide a very basic example of implemented algorithm: among 20 nodes, the source has the ID equal to 3 and destination equal to 18, and the aggregate program does the following:

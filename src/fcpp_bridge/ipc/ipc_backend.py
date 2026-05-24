@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict
+from typing import Any, Dict
 
 from .swarm_snapshot import SwarmSnapshot
+from .updates_listener import UpdatesListener
 
 
 class IpcBackend(ABC):
@@ -17,10 +18,8 @@ class IpcBackend(ABC):
         """Get current swarm state."""
         pass
 
-    def subscribe_state_updates(
-        self, callback: Callable[[SwarmSnapshot], None]
-    ) -> None:
-        """Subscribe to continuous state updates (optional; default: noop)."""
+    def subscribe_state_updates(self, callback: UpdatesListener) -> None:
+        """Subscribe to push state updates (optional; default no-op)."""
 
     @abstractmethod
     def close(self) -> None:

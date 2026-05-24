@@ -22,6 +22,33 @@ def test_compiler_init():
         assert compiler.cpp_dir.exists()
 
 
+def test_compiler_default_std_and_opt():
+    compiler = Compiler(cache_dir=Path("/tmp/x"), cpp_dir=Path("/tmp/y"))
+    assert compiler.std == "c++26"
+    assert compiler.opt_level == "2"
+    assert compiler.extra_includes == []
+
+
+def test_compiler_custom_std_opt_includes(tmp_path):
+    compiler = Compiler(
+        cache_dir=tmp_path / "build",
+        cpp_dir=tmp_path / "cpp",
+        std="c++17",
+        opt_level="3",
+        extra_includes=["/usr/local/include/mylib"],
+    )
+    assert compiler.std == "c++17"
+    assert compiler.opt_level == "3"
+    assert compiler.extra_includes == ["/usr/local/include/mylib"]
+
+
+def test_compiler_extra_includes_defensive_copy(tmp_path):
+    src = ["/inc/a"]
+    compiler = Compiler(cache_dir=tmp_path / "b", cpp_dir=tmp_path / "c", extra_includes=src)
+    src.append("/inc/b")
+    assert compiler.extra_includes == ["/inc/a"]  # not affected by mutation
+
+
 def test_compiler_cache_dir_creation():
     with tempfile.TemporaryDirectory() as tmpdir:
         build_dir = Path(tmpdir) / "nonexistent" / "build"

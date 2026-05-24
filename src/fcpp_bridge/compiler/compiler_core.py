@@ -11,17 +11,36 @@ from .program_cache import ProgramCache
 
 
 class Compiler:
-    """Invoke GCC to compile C++ code."""
+    """Invoke GCC to compile C++ code.
+
+    Constructor parameters
+    ----------------------
+    cache_dir        Where compiled binaries are cached (default: "build").
+    cpp_dir          Where generated C++ source files are written (default:
+                     "cpp_transpiled").
+    gcc_path         Path to the g++ executable (default: "g++").
+    std              C++ standard flag value — e.g. "c++14", "c++17", "c++26"
+                     (default: "c++26").
+    opt_level        Optimisation level digit/letter — "0", "1", "2", "3",
+                     "s", "g" (default: "2", i.e. -O2).
+    extra_includes   Additional include directories prepended with -I.
+    """
 
     def __init__(
         self,
         cache_dir: Path = Path("build"),
         cpp_dir: Path = Path("cpp_transpiled"),
         gcc_path: str = "g++",
+        std: str = "c++26",
+        opt_level: str = "2",
+        extra_includes: Optional[List[str]] = None,
     ):
         self.cache_dir = cache_dir
         self.cpp_dir = cpp_dir
         self.gcc_path = gcc_path
+        self.std = std
+        self.opt_level = opt_level
+        self.extra_includes: List[str] = list(extra_includes) if extra_includes else []
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cpp_dir.mkdir(parents=True, exist_ok=True)
@@ -33,19 +52,26 @@ class Compiler:
         output_binary: Path,
         extra_flags: List[str] = None,
     ) -> CompilationResult:
-        """Compile C++ file to executable."""
+        """Compile C++ file to executable.
+
+        extra_flags are appended after all other flags so they can override
+        defaults (e.g. pass ["-O0"] to override the constructor's opt_level
+        for a single file without recreating the Compiler).
+        """
         if not cpp_file.exists():
             raise CompilationError(f"C++ source not found: {cpp_file}")
 
         start = time.time()
 
         flags = [
-            "-std=c++26",
+            f"-std={self.std}",
             "-Wall",
             "-Wextra",
-            "-O2",
+            f"-O{self.opt_level}",
             "-I", str(Path(__file__).parent.parent / "fcpp_clone_GITIGNORE_ME" / "src"),
         ]
+        for inc in self.extra_includes:
+            flags.extend(["-I", inc])
 
         _sys = platform.system()
         if _sys == "Windows" or (_sys == "Linux" and shutil.which("lld") is not None):

@@ -1,6 +1,6 @@
 # FCPP Python-to-C++ Bridge — Comprehensive Design Document
 
-**Status**: All 7 Phases Implemented (v0.9)  
+**Status**: All 7 Phases Implemented (v1.1)  
 **Last Updated**: 2026-05-24  
 **Project**: `fcpp_bridge/` (implemented)
 
@@ -614,10 +614,28 @@ src/fcpp_bridge/
 
 **Total: 482 tests — 482 pass, 0 fail. (+50 from OOP/Prototype/logging/callable refactor 2026-05-24)**
 
+13. [x] Network listener pipeline + node management refactor (v1.0) — 38 new tests
+    - `ipc/updates_listener.py`: `UpdatesListener = Callable[[SwarmSnapshot], None]`
+    - `ipc/listener_proxy.py`: `ListenerProxy(mode="sequential"|"parallel")` — `add_listener(fn)→int`, `remove_listener(id)`, `__call__(snap)`, `close()`
+    - `SwarmProcess` node strategies: `add_nodes_random(count, *, area, comm_range, max_speed, propulsion)`, `add_node_explicit(id, pos, **kw)`, `add_nodes_sequential(count, start_positions)`, `add_nodes(count)` (backward-compat alias)
+    - `SwarmProcess.remove_node(node_id)` — simulation disconnection
+    - Passive heartbeat: `check_liveness(timeout)`, `start_heartbeat_monitor(interval, timeout, on_dead)`, `stop_heartbeat_monitor()`; `get_state()` also updates timestamps
+    - Listener pipeline: `add_listener(fn)→int`, `remove_listener(id)`, `add_node_listener(node_id, fn)→int`, `remove_node_listener(node_id, id)`; per-node proxy overrides global; auto-creates `ListenerProxy` on first call
+    - `_known_node_ids: set` + `_next_sequential_id: int` track all assigned IDs; initialised to `range(num_nodes)` at `start()` time
+    - `IpcBackend.subscribe_state_updates` signature updated to `UpdatesListener`; wired to `_dispatch_update` in `start()`
+    - Progress tracked in `NETWORK_REFACTOR_JOURNAL.md`
+14. [x] Compiler customization + tutorials (v1.1) — 3 new tests
+    - `Compiler.__init__` gains `std: str = "c++26"`, `opt_level: str = "2"`, `extra_includes: Optional[List[str]] = None`
+    - `TUTORIAL_simple.md`: beginner guide — 20-node hop-channel (BIS distance + hop count + broadcast); DSL → transpile → compile → run → listener pipeline; pure-Python fallback
+    - `TUTORIAL_in_depth.md`: production guide — `HopChannelSimulation` class; `ListenerProxy` global + per-node node-5 override; dynamic listener management; full lifecycle; node add/remove/heartbeat; complete feature reference table
+
+**Total: 523 tests — 523 pass, 0 fail.**
+
 ### Remaining / Future Work
 
 - Multi-swarm coordination UI (DeviceManager backend done; frontend TBD)
 - Activate ANTLR4 path: run `grammar/generate_antlr.py --download` (requires Java 11+)
+- Active heartbeat (ping/pong) for physical device deployments (requires C++ runtime support)
 
 ### Run Tests
 

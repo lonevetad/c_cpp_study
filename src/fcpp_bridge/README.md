@@ -35,8 +35,10 @@ PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/test
 | 7     | Visualization & ANTLR gen | ✅ Done  | 16    |
 | v0.8  | Extended type system      | ✅ Done  | +37   |
 | v0.9  | OOP/Prototype/logging     | ✅ Done  | +50   |
+| v1.0  | Network listener pipeline | ✅ Done  | +38   |
+| v1.1  | Compiler customization + tutorials | ✅ Done | +3 |
 
-**Total: 482 tests — 482 pass, 0 fail.**
+**Total: 523 tests — 523 pass, 0 fail.**
 
 ## Architecture
 
@@ -84,14 +86,16 @@ fcpp_bridge/
 │   └── compilation_error_parser.py
 ├── runtime/                Phase 4: C++ runtime library (generated headers)
 │   └── runtime_generator.py
-├── ipc/                    Phase 4B: Communication backends
+├── ipc/                    Phase 4B / v1.0: Communication backends + listener pipeline
 │   ├── node_state.py
 │   ├── swarm_snapshot.py
+│   ├── updates_listener.py   UpdatesListener type alias
+│   ├── listener_proxy.py     ListenerProxy (sequential / parallel-async)
 │   ├── ipc_backend.py
 │   ├── unix_socket_backend.py
 │   ├── http_backend.py
 │   ├── grpc_backend.py
-│   ├── swarm_process.py
+│   ├── swarm_process.py      node add/remove strategies, heartbeat, listener mgmt
 │   └── device_manager.py
 ├── grammar/                Phase 5: Language parser (recursive-descent + ANTLR gen)
 │   ├── ast_node.py
@@ -152,6 +156,8 @@ and resume instructions.
 - **[Phase-by-Phase Rollout](../bridge.md#part-5-phase-by-phase-rollout)** — Detailed checklist
 - **[Glossary](../bridge.md#appendix-glossary)** — Terminology
 - **[VISUALIZATION.md](VISUALIZATION.md)** — Phase 7: ANTLR generation & visualization plugin
+- **[TUTORIAL_simple.md](TUTORIAL_simple.md)** — Beginner tutorial: 20-node hop-channel (BIS + nbr/min_hood + broadcast)
+- **[TUTORIAL_in_depth.md](TUTORIAL_in_depth.md)** — Production tutorial: custom class, listener proxy, node management, heartbeat
 
 ## What Works
 
@@ -163,7 +169,7 @@ and resume instructions.
 - ✅ `PythonAstVisitor`: all binary/comparison operators, built-ins (max, min, len, sum), attrs, subscripts; all 64 FCPP primitives inject `CALL` and auto-add coordination headers
 - ✅ `CppCodeBuilder` + `Transpiler.generate()` → complete C++ source string
 - ✅ `ProgramCache` (SHA-256 hash, manifest, persistent across runs)
-- ✅ `Compiler` (GCC invocation, caching, `get_or_compile`)
+- ✅ `Compiler` (GCC invocation, caching, `get_or_compile`; `std`, `opt_level`, `extra_includes` constructor params for full flag customization)
 - ✅ `RuntimeGenerator` (C++ headers: ipc_server, state_serializer, node_manager, main_template)
 - ✅ `UnixSocketBackend`, `HttpBackend`, `GrpcBackend` (full gRPC streaming with `.proto`)
 - ✅ `SwarmProcess` (subprocess lifecycle, step, get_state, add_nodes)
@@ -187,6 +193,46 @@ and resume instructions.
 - Phase 7: Multi-swarm coordination UI
 - Phase 7: Run `generate_antlr.py --download` to activate the ANTLR4 parser path (requires Java 11+)
 
+## v1.0 — Network listener pipeline & node management refactor
+
+- **`UpdatesListener`**: `Callable[[SwarmSnapshot], None]` type alias in `updates_listener.py`
+- **`ListenerProxy`**: proxy that dispatches state updates to a dynamic list of listeners;
+  `mode="sequential"` (default) or `"parallel"` (thread-pool); `add_listener(fn)` → `int` ID;
+  `remove_listener(id)`; `close()` shuts down the thread pool
+- **`SwarmProcess` — node addition strategies**:
+  - `add_nodes_random(count, *, area, comm_range, max_speed, propulsion)` → `List[int]` (random unique IDs)
+  - `add_node_explicit(node_id, position, *, comm_range, max_speed, propulsion)` — physical/production devices
+  - `add_nodes_sequential(count, start_positions=None)` → `List[int]` (sequential IDs, unique by construction)
+  - `add_nodes(count)` preserved as backward-compatible alias
+- **`SwarmProcess.remove_node(node_id)`**: removes a node by ID (simulation disconnection)
+- **Passive heartbeat / liveness**:
+  - `check_liveness(timeout=30.0)` → `Dict[int, bool]` — alive if last seen within timeout seconds
+  - `start_heartbeat_monitor(interval, timeout, on_dead=None)` — background thread, idempotent
+  - `stop_heartbeat_monitor()`
+  - `get_state()` now also updates heartbeat timestamps (pull path)
+- **`SwarmProcess` — listener pipeline**:
+  - `add_listener(fn)` → `int` — global listener; auto-creates `ListenerProxy` on first call
+  - `remove_listener(listener_id)`
+  - `add_node_listener(node_id, fn)` → `int` — per-node override (takes priority over global)
+  - `remove_node_listener(node_id, listener_id)`
+  - `_dispatch_update(snapshot)` routes each node's snapshot: per-node proxy → global proxy
+- **`IpcBackend.subscribe_state_updates`** signature updated to use `UpdatesListener`
+
+## v1.1 — Compiler customization + tutorials
+
+- **`Compiler` constructor** now accepts `std: str = "c++26"`, `opt_level: str = "2"`,
+  `extra_includes: List[str] = None` — full control over the C++ standard, optimization
+  level (`-O0` through `-O3`/`-Os`/`-Og`), and extra include directories.
+  `extra_flags` in `compile()` still allows per-call overrides (appended last, GCC takes
+  last occurrence for `-O` and `-std`).
+- **`TUTORIAL_simple.md`** — beginner guide: 20-node network, source=3, destination=18;
+  BIS distance + hop count via `nbr`/`min_hood` + source-ID broadcast; full pipeline
+  (define → transpile → compile → run → listen); pure-Python simulation fallback.
+- **`TUTORIAL_in_depth.md`** — production guide: `HopChannelSimulation` wrapper class,
+  global `ListenerProxy` (logging + debug), per-node override for node 5, dynamic
+  listener add/remove, start/pause/resume/stop lifecycle, node add/remove/heartbeat,
+  compiler flag customization, complete reference table.
+
 ## v0.9 — OOP / Prototype / Logging refactor
 
 - **`Primitive` base**: all 64 primitive classes inherit `Primitive`; `clone()` / `clone_with(**changes)` implement the Prototype pattern; `has_callable_args` + `callable_arg_positions` mark G&& callable arguments
@@ -206,7 +252,7 @@ See **[PRIMITIVE_AUDIT.md](PRIMITIVE_AUDIT.md)** for the full record of how all 
 | Scope       | Vec2/Vec3 + simulation callbacks | Full DSL + code gen + IPC       |
 | Compilation | Once (build time)                | Dynamic (per program)           |
 | Callback    | Python calls into C++            | C++ runs independently          |
-| Status      | Mature (Phase 2 tested)          | All 7 phases + type system (v0.8) |
+| Status      | Mature (Phase 2 tested)          | 7 phases + type system + v1.0 IPC |
 
 **Note**: fcpp_py_porting is a reference/learning project. fcpp_bridge is the production design.
 
