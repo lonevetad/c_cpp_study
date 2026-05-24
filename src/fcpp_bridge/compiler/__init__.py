@@ -1,11 +1,14 @@
 """Compilation pipeline — build C++ code to executable."""
 
 import hashlib
+import platform
+import re
+import shutil
 import subprocess
 import os
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class CompilationError(Exception):
@@ -55,13 +58,14 @@ class ProgramCache:
         return hashlib.sha256(content.encode()).hexdigest()[:16]
 
     def lookup(self, cpp_code: str) -> Optional[Path]:
-        """Return cached binary path if exists."""
+        """Return cached binary path (None if not in manifest).
+
+        Does NOT check file existence — that is the caller's responsibility,
+        because the cache is a content-addressed store and shouldn't recompile
+        just because a binary was moved.
+        """
         cache_key = self._hash(cpp_code)
-        if cache_key in self.manifest:
-            binary_path = self.manifest[cache_key]
-            if binary_path.exists():
-                return binary_path
-        return None
+        return self.manifest.get(cache_key)
 
     def store(self, cpp_code: str, binary_path: Path) -> None:
         """Cache binary path for this code."""
@@ -119,10 +123,15 @@ class Compiler:
             "-std=c++26",
             "-Wall",
             "-Wextra",
-            "-fuse-ld=lld",  # LLD linker (required for Windows)
-            "-O2",  # Optimization level
+            "-O2",
             "-I", str(Path(__file__).parent.parent / "fcpp_clone_GITIGNORE_ME" / "src"),
         ]
+
+        # LLD linker: required on Windows (BFD ld crashes on large fcpp COMDAT tables).
+        # Use it on Linux when available.  Skip on macOS — Apple ld64 doesn't support it.
+        _sys = platform.system()
+        if _sys == "Windows" or (_sys == "Linux" and shutil.which("lld") is not None):
+            flags.append("-fuse-ld=lld")
 
         if extra_flags:
             flags.extend(extra_flags)
@@ -202,9 +211,9 @@ class Compiler:
         Raises:
             CompilationError: if compilation fails
         """
-        # Check cache first
+        # Check cache first; recompile if cached path no longer exists on disk.
         cached = self.cache.lookup(cpp_code)
-        if cached:
+        if cached and cached.exists():
             print(f"[Compiler] Cache hit: {cached}")
             return cached
 
@@ -255,3 +264,203 @@ class Compiler:
                 f.stat().st_size for f in self.cache_dir.glob("*") if f.is_file()
             ),
         }
+
+
+# =============================================================================
+# CMakeLists.txt Generator (Phase 3)
+# =============================================================================
+
+
+class CmakeGenerator:
+    """Generate CMakeLists.txt for compiled FCPP programs.
+
+    Produces a CMakeLists.txt that compiles a single generated C++ source
+    against the FCPP headers with the correct C++14 standard.
+    """
+
+    def __init__(
+        self,
+        fcpp_src_path: Optional[Path] = None,
+        runtime_include_path: Optional[Path] = None,
+    ):
+        """
+        Args:
+            fcpp_src_path: Path to the FCPP source tree (contains ``src/``).
+                           Defaults to the sibling ``fcpp_clone_GITIGNORE_ME/fcpp``
+                           inside the project.
+            runtime_include_path: Path to the generated runtime headers
+                                  (ipc_server.hpp, etc.).  Defaults to
+                                  ``<project>/build/runtime``.
+        """
+        project_root = Path(__file__).parent.parent
+        self.fcpp_src_path = fcpp_src_path or (
+            project_root / "fcpp_clone_GITIGNORE_ME" / "fcpp" / "src"
+        )
+        self.runtime_include_path = runtime_include_path or (
+            project_root / "build" / "runtime"
+        )
+
+    def generate(
+        self,
+        program_name: str,
+        cpp_file: Path,
+        output_dir: Optional[Path] = None,
+    ) -> str:
+        """Return CMakeLists.txt content as a string.
+
+        Args:
+            program_name: Target executable name (no spaces).
+            cpp_file: Path to the ``.cpp`` source file to compile.
+            output_dir: Where the binary should land (CMAKE_RUNTIME_OUTPUT_DIRECTORY).
+        """
+        output_dir_line = ""
+        if output_dir:
+            output_dir_line = (
+                f"set(CMAKE_RUNTIME_OUTPUT_DIRECTORY {output_dir})\n"
+            )
+
+        return (
+            "cmake_minimum_required(VERSION 3.14)\n"
+            f"project({program_name})\n\n"
+            "set(CMAKE_CXX_STANDARD 14)\n"
+            "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n\n"
+            f"{output_dir_line}"
+            f"include_directories({self.fcpp_src_path})\n"
+            f"include_directories({self.runtime_include_path})\n\n"
+            f"add_executable({program_name} {cpp_file.name})\n\n"
+            f"target_compile_options({program_name} PRIVATE\n"
+            "    -Wall -Wextra -O2\n"
+            ")\n"
+        )
+
+    def write(
+        self,
+        program_name: str,
+        cpp_file: Path,
+        output_dir: Optional[Path] = None,
+    ) -> Path:
+        """Write CMakeLists.txt next to *cpp_file* and return its path."""
+        cmake_path = cpp_file.parent / "CMakeLists.txt"
+        cmake_path.write_text(
+            self.generate(program_name, cpp_file, output_dir)
+        )
+        return cmake_path
+
+    def generate_build_commands(
+        self,
+        cmake_dir: Path,
+        build_dir: Path,
+    ) -> List[str]:
+        """Return the shell commands needed to configure and build.
+
+        Returns a list of commands that can be joined with ``&&`` or run
+        individually in a subprocess.
+        """
+        return [
+            f"cmake -S {cmake_dir} -B {build_dir} -DCMAKE_BUILD_TYPE=Release",
+            f"cmake --build {build_dir} --parallel",
+        ]
+
+
+# =============================================================================
+# GCC Error Parser (Phase 3)
+# =============================================================================
+
+
+@dataclass
+class CompilationDiagnostic:
+    """A single GCC/Clang diagnostic (error, warning, or note)."""
+
+    file: str
+    line: int
+    column: int
+    level: str   # "error", "warning", or "note"
+    message: str
+    context_line: str = ""  # the source line from the file (if available)
+
+    def __str__(self) -> str:
+        loc = f"{self.file}:{self.line}:{self.column}"
+        return f"{loc}: {self.level}: {self.message}"
+
+
+class CompilationErrorParser:
+    """Parse GCC/Clang stderr and produce structured diagnostics.
+
+    Maps compiler errors back to readable messages that surface the root
+    cause without raw template noise.
+    """
+
+    # Standard GCC/Clang diagnostic line:
+    #   path/to/file.cpp:42:10: error: 'x' was not declared
+    _DIAG_RE = re.compile(
+        r"^(?P<file>[^:]+):(?P<line>\d+):(?P<col>\d+):"
+        r"\s*(?P<level>error|warning|note):\s*(?P<msg>.+)$"
+    )
+
+    # Template instantiation noise — lines to skip
+    _SKIP_PREFIXES = (
+        "In file included from",
+        "                 from",
+        "In instantiation of",
+        "required from",
+        "required by",
+    )
+
+    @staticmethod
+    def parse(stderr: str) -> List[CompilationDiagnostic]:
+        """Parse GCC stderr into a list of CompilationDiagnostic objects."""
+        diagnostics: List[CompilationDiagnostic] = []
+
+        for raw_line in stderr.splitlines():
+            line = raw_line.strip()
+
+            # Skip template instantiation noise
+            if any(line.startswith(p) for p in CompilationErrorParser._SKIP_PREFIXES):
+                continue
+
+            m = CompilationErrorParser._DIAG_RE.match(line)
+            if m:
+                diagnostics.append(
+                    CompilationDiagnostic(
+                        file=m.group("file"),
+                        line=int(m.group("line")),
+                        column=int(m.group("col")),
+                        level=m.group("level"),
+                        message=m.group("msg").strip(),
+                    )
+                )
+
+        return diagnostics
+
+    @staticmethod
+    def errors_only(
+        diagnostics: List[CompilationDiagnostic],
+    ) -> List[CompilationDiagnostic]:
+        """Return only error-level diagnostics."""
+        return [d for d in diagnostics if d.level == "error"]
+
+    @staticmethod
+    def format_summary(
+        diagnostics: List[CompilationDiagnostic],
+        max_errors: int = 5,
+    ) -> str:
+        """Format up to *max_errors* errors as a compact Python-style message."""
+        errors = CompilationErrorParser.errors_only(diagnostics)
+        if not errors:
+            return "No errors found."
+
+        lines = [f"{len(errors)} compilation error(s):"]
+        for d in errors[:max_errors]:
+            lines.append(f"  {d}")
+        if len(errors) > max_errors:
+            lines.append(f"  ... and {len(errors) - max_errors} more error(s)")
+        return "\n".join(lines)
+
+    @staticmethod
+    def raise_if_errors(stderr: str) -> None:
+        """Parse *stderr* and raise CompilationError if any errors found."""
+        diags = CompilationErrorParser.parse(stderr)
+        errors = CompilationErrorParser.errors_only(diags)
+        if errors:
+            summary = CompilationErrorParser.format_summary(diags)
+            raise CompilationError(summary)

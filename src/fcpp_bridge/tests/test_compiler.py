@@ -254,5 +254,13 @@ def test_compilation_result_failure():
     assert "undefined reference" in result.stderr
 
 
+def test_cache_get_key_consistent():
+    """Same code always produces the same cache key."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache = ProgramCache(Path(tmpdir))
+        code = "int main() { return 42; }"
+        assert cache.get_key(code) == cache.get_key(code)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

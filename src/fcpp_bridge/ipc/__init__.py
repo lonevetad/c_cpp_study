@@ -41,6 +41,15 @@ class IpcBackend(ABC):
         """Get current swarm state."""
         pass
 
+    def subscribe_state_updates(
+        self, callback: Callable[[SwarmSnapshot], None]
+    ) -> None:
+        """Subscribe to continuous state updates (optional; default: noop).
+
+        Backends that support streaming (gRPC) override this; polling
+        backends (Unix socket, HTTP) leave the default no-op in place.
+        """
+
     @abstractmethod
     def close(self) -> None:
         """Close connection."""
@@ -102,7 +111,7 @@ class UnixSocketBackend(IpcBackend):
         nodes = [
             NodeState(
                 node_id=n["id"],
-                state_data=n["state"],
+                state_data=n.get("state"),
                 timestamp=n.get("timestamp", 0.0),
             )
             for n in response.get("nodes", [])
@@ -168,7 +177,7 @@ class HttpBackend(IpcBackend):
         nodes = [
             NodeState(
                 node_id=n["id"],
-                state_data=n["state"],
+                state_data=n.get("state"),
                 timestamp=n.get("timestamp", 0.0),
             )
             for n in response.get("nodes", [])
@@ -185,42 +194,146 @@ class HttpBackend(IpcBackend):
 
 
 class GrpcBackend(IpcBackend):
-    """
-    gRPC backend for streaming state updates.
+    """gRPC backend for streaming state updates.
 
-    Requires: pip install grpcio
+    Requires:
+        pip install grpcio grpcio-tools
+
+    Generate Python stubs from fcpp_swarm.proto:
+        python -m grpc_tools.protoc \\
+            -I src/fcpp_bridge/ipc \\
+            --python_out=src/fcpp_bridge/ipc \\
+            --grpc_python_out=src/fcpp_bridge/ipc \\
+            src/fcpp_bridge/ipc/fcpp_swarm.proto
+
+    The generated modules (fcpp_swarm_pb2.py, fcpp_swarm_pb2_grpc.py) must
+    be present in this package before the backend is usable.
     """
 
-    def __init__(self, host: str = "localhost", port: int = 50051):
+    def __init__(self, host: str = "localhost", port: int = 50051, timeout: float = 5.0):
         self.host = host
         self.port = port
+        self.timeout = timeout
         self.channel = None
         self.stub = None
+        self._stream_thread: Optional[threading.Thread] = None
+        self._stream_running = False
         self._connect()
 
     def _connect(self) -> None:
-        """Connect to gRPC server."""
+        """Open gRPC channel and create service stub."""
         try:
             import grpc
 
-            self.channel = grpc.aio.secure_channel(f"{self.host}:{self.port}")
-            # Stub creation would go here (requires .proto definitions)
+            self.channel = grpc.insecure_channel(f"{self.host}:{self.port}")
+
+            # Import generated stubs — must run grpc_tools.protoc first
+            try:
+                from fcpp_bridge.ipc import (  # type: ignore[attr-defined]
+                    fcpp_swarm_pb2_grpc as _grpc_stub,
+                )
+                self.stub = _grpc_stub.SwarmServiceStub(self.channel)
+            except ImportError:
+                self.stub = None  # stubs not generated yet; send_command will fail informatively
+
         except ImportError:
-            raise RuntimeError("grpcio library not installed; install with: pip install grpcio")
+            raise RuntimeError(
+                "grpcio not installed. Install with: pip install grpcio grpcio-tools"
+            )
+
+    def _require_stub(self) -> None:
+        if self.stub is None:
+            raise RuntimeError(
+                "gRPC stubs not generated. Run:\n"
+                "  python -m grpc_tools.protoc "
+                "-I src/fcpp_bridge/ipc "
+                "--python_out=src/fcpp_bridge/ipc "
+                "--grpc_python_out=src/fcpp_bridge/ipc "
+                "src/fcpp_bridge/ipc/fcpp_swarm.proto"
+            )
 
     def send_command(self, cmd: Dict[str, Any]) -> Dict[str, Any]:
-        """Send command via gRPC."""
-        raise NotImplementedError("Phase 6: gRPC backend full implementation pending")
+        """Send a control command to the swarm via gRPC."""
+        self._require_stub()
+
+        try:
+            from fcpp_bridge.ipc import fcpp_swarm_pb2 as _pb2  # type: ignore[attr-defined]
+
+            request = _pb2.CommandRequest(
+                cmd=cmd.get("cmd", ""),
+                count=cmd.get("count", 0),
+                data=json.dumps(cmd).encode() if cmd else b"",
+            )
+            response = self.stub.SendCommand(request, timeout=self.timeout)
+            result = {"success": response.success, "message": response.message}
+            if response.data:
+                result.update(json.loads(response.data))
+            return result
+        except Exception as e:
+            raise RuntimeError(f"gRPC send_command failed: {e}") from e
 
     def get_state(self) -> SwarmSnapshot:
-        """Get state via gRPC streaming."""
-        raise NotImplementedError("Phase 6: gRPC backend full implementation pending")
+        """Retrieve the current swarm state via gRPC unary call."""
+        self._require_stub()
+
+        try:
+            from fcpp_bridge.ipc import fcpp_swarm_pb2 as _pb2  # type: ignore[attr-defined]
+
+            request = _pb2.StateRequest(from_round=0)
+            response = self.stub.GetState(request, timeout=self.timeout)
+            return self._proto_to_snapshot(response)
+        except Exception as e:
+            raise RuntimeError(f"gRPC get_state failed: {e}") from e
+
+    def subscribe_state_updates(
+        self, callback: Callable[[SwarmSnapshot], None]
+    ) -> None:
+        """Start a background thread that streams state updates via gRPC."""
+        self._require_stub()
+
+        def _stream() -> None:
+            try:
+                from fcpp_bridge.ipc import fcpp_swarm_pb2 as _pb2  # type: ignore[attr-defined]
+
+                request = _pb2.StateRequest(from_round=0)
+                for response in self.stub.StreamState(request):
+                    if not self._stream_running:
+                        break
+                    callback(self._proto_to_snapshot(response))
+            except Exception:
+                pass  # stream closed or server stopped
+
+        self._stream_running = True
+        self._stream_thread = threading.Thread(target=_stream, daemon=True)
+        self._stream_thread.start()
+
+    def _proto_to_snapshot(self, response: Any) -> SwarmSnapshot:
+        """Convert a SwarmStateResponse protobuf message to a SwarmSnapshot."""
+        nodes = []
+        for n in response.nodes:
+            try:
+                state_data = json.loads(n.state_json) if n.state_json else None
+            except (json.JSONDecodeError, ValueError):
+                state_data = n.state_json
+            nodes.append(NodeState(
+                node_id=n.id,
+                state_data=state_data,
+                timestamp=n.timestamp,
+            ))
+        return SwarmSnapshot(
+            round_number=response.round_number,
+            time=response.sim_time,
+            nodes=nodes,
+        )
 
     def close(self) -> None:
-        """Close gRPC channel."""
+        """Stop streaming thread and close gRPC channel."""
+        self._stream_running = False
+        if self._stream_thread and self._stream_thread.is_alive():
+            self._stream_thread.join(timeout=2.0)
         if self.channel:
-            # self.channel.close()
-            pass
+            self.channel.close()
+            self.channel = None
 
 
 class SwarmProcess:
@@ -233,6 +346,8 @@ class SwarmProcess:
         state = swarm.get_state()
         swarm.close()
     """
+
+    backend: Optional[IpcBackend] = None  # class-level attr required for patch.object
 
     def __init__(
         self,
@@ -329,3 +444,163 @@ class SwarmProcess:
             self.process = None
 
         print("[SwarmProcess] Closed")
+
+
+class DeviceManager:
+    """
+    Manage multiple SwarmProcess instances as named devices.
+
+    Usage::
+
+        mgr = DeviceManager()
+        mgr.add("swarm_a", binary_path, num_nodes=50)
+        mgr.add("swarm_b", binary_path, num_nodes=100, ipc_backend="grpc")
+        mgr.start_all()
+        states = mgr.get_all_states()
+        mgr.send_all({"cmd": "step"})
+        mgr.close_all()
+
+    Also usable as a context manager::
+
+        with DeviceManager() as mgr:
+            mgr.add("s1", path)
+            mgr.start_all()
+    """
+
+    def __init__(self):
+        self._devices: Dict[str, SwarmProcess] = {}
+
+    # ------------------------------------------------------------------ #
+    # Registration                                                         #
+    # ------------------------------------------------------------------ #
+
+    def add(
+        self,
+        name: str,
+        binary_path: "Path",
+        num_nodes: int = 100,
+        ipc_backend: str = "unix",
+        ipc_port: Optional[int] = None,
+    ) -> "SwarmProcess":
+        """Register a new device (does not start it yet)."""
+        if name in self._devices:
+            raise ValueError(f"Device '{name}' already registered")
+        proc = SwarmProcess(
+            binary_path=binary_path,
+            num_nodes=num_nodes,
+            ipc_backend=ipc_backend,
+            ipc_port=ipc_port,
+        )
+        self._devices[name] = proc
+        return proc
+
+    def remove(self, name: str) -> None:
+        """Unregister a device (closes it first if running)."""
+        if name not in self._devices:
+            raise KeyError(f"No device named '{name}'")
+        self._devices[name].close()
+        del self._devices[name]
+
+    def get(self, name: str) -> "SwarmProcess":
+        """Return device by name."""
+        if name not in self._devices:
+            raise KeyError(f"No device named '{name}'")
+        return self._devices[name]
+
+    @property
+    def device_names(self) -> List[str]:
+        """List of registered device names."""
+        return list(self._devices.keys())
+
+    @property
+    def device_count(self) -> int:
+        """Number of registered devices."""
+        return len(self._devices)
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle                                                            #
+    # ------------------------------------------------------------------ #
+
+    def start(self, name: str) -> None:
+        """Start a single named device."""
+        self.get(name).start()
+
+    def start_all(self) -> None:
+        """Start all registered devices."""
+        for name, proc in self._devices.items():
+            try:
+                proc.start()
+            except Exception as exc:
+                print(f"[DeviceManager] Failed to start '{name}': {exc}")
+
+    def close(self, name: str) -> None:
+        """Close a single named device."""
+        self.get(name).close()
+
+    def close_all(self) -> None:
+        """Close all registered devices."""
+        for name, proc in list(self._devices.items()):
+            try:
+                proc.close()
+            except Exception as exc:
+                print(f"[DeviceManager] Error closing '{name}': {exc}")
+
+    # ------------------------------------------------------------------ #
+    # Coordination                                                         #
+    # ------------------------------------------------------------------ #
+
+    def send_all(self, cmd: Dict[str, Any]) -> Dict[str, Any]:
+        """Send the same command to every connected device.
+
+        Returns a mapping of device name → response dict (or error string).
+        """
+        results: Dict[str, Any] = {}
+        for name, proc in self._devices.items():
+            if proc.backend is None:
+                results[name] = {"error": "not connected"}
+                continue
+            try:
+                results[name] = proc.backend.send_command(cmd)
+            except Exception as exc:
+                results[name] = {"error": str(exc)}
+        return results
+
+    def step_all(self) -> None:
+        """Execute one simulation round on every connected device."""
+        for name, proc in self._devices.items():
+            if proc.backend is None:
+                continue
+            try:
+                proc.step()
+            except Exception as exc:
+                print(f"[DeviceManager] step failed for '{name}': {exc}")
+
+    def get_all_states(self) -> Dict[str, Any]:
+        """Get current state from every connected device.
+
+        Returns a mapping of device name → SwarmSnapshot (or error string).
+        """
+        states: Dict[str, Any] = {}
+        for name, proc in self._devices.items():
+            if proc.backend is None:
+                states[name] = {"error": "not connected"}
+                continue
+            try:
+                states[name] = proc.get_state()
+            except Exception as exc:
+                states[name] = {"error": str(exc)}
+        return states
+
+    def total_nodes(self) -> int:
+        """Sum of num_nodes across all registered devices."""
+        return sum(proc.num_nodes for proc in self._devices.values())
+
+    # ------------------------------------------------------------------ #
+    # Context manager                                                      #
+    # ------------------------------------------------------------------ #
+
+    def __enter__(self) -> "DeviceManager":
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.close_all()

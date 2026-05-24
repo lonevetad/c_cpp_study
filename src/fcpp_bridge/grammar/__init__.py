@@ -100,7 +100,21 @@ class AggregateLanguageParser:
             (r"\bcompute\b", "COMPUTE"),
             (r"\bif\b", "IF"),
             (r"\breturn\b", "RETURN"),
-            (r"\b(nbr|old|max_hood|min_hood|fold_hood|count_hood)\b", "PRIMITIVE"),
+            (r"\b(nbr|old|nbr_uid|oldnbr|align|align_inplace|mod_other|split"
+             r"|fold_hood|count_hood|spawn"
+             r"|min_hood|max_hood|sum_hood|mean_hood|all_hood|any_hood|list_hood"
+             r"|abf_distance|abf_hops|bis_distance|flex_distance|broadcast|bis_ksource_broadcast"
+             r"|gossip|gossip_min|gossip_max|gossip_mean"
+             r"|sp_collection|mp_collection|wmp_collection|list_idem_collection|list_arith_collection"
+             r"|follow_target|follow_path|follow_track|random_rectangle_target|rectangle_walk"
+             r"|neighbour_elastic_force|neighbour_gravitational_force|neighbour_charged_force"
+             r"|line_elastic_force|plane_elastic_force|point_elastic_force|point_gravitational_force"
+             r"|diameter_election|diameter_election_distance"
+             r"|color_election|color_election_distance"
+             r"|wave_election|wave_election_distance"
+             r"|constant|constant_after|counter|delay|round_since|time_since"
+             r"|timed_decay|exponential_filter|shared_clock|shared_decay|shared_filter"
+             r"|toggle|toggle_filter)\b", "PRIMITIVE"),
             (r"\b[a-zA-Z_]\w*\b", "NAME"),
             (r"\d+\.\d+", "FLOAT"),
             (r"\d+", "INT"),
@@ -225,19 +239,51 @@ class AggregateLanguageParser:
 
         return left
 
+    # All recognised FCPP aggregate primitives.
+    _ALL_PRIMITIVES = frozenset({
+        # basics.hpp
+        "nbr", "old", "nbr_uid", "oldnbr", "align", "align_inplace",
+        "mod_other", "split", "fold_hood", "count_hood", "spawn",
+        # utils.hpp
+        "min_hood", "max_hood", "sum_hood", "mean_hood",
+        "all_hood", "any_hood", "list_hood",
+        # spreading.hpp
+        "abf_distance", "abf_hops", "bis_distance", "flex_distance",
+        "broadcast", "bis_ksource_broadcast",
+        # collection.hpp
+        "gossip", "gossip_min", "gossip_max", "gossip_mean",
+        "sp_collection", "mp_collection", "wmp_collection",
+        "list_idem_collection", "list_arith_collection",
+        # geometry.hpp
+        "follow_target", "follow_path", "follow_track",
+        "random_rectangle_target", "rectangle_walk",
+        "neighbour_elastic_force", "neighbour_gravitational_force", "neighbour_charged_force",
+        "line_elastic_force", "plane_elastic_force",
+        "point_elastic_force", "point_gravitational_force",
+        # election.hpp
+        "diameter_election", "diameter_election_distance",
+        "color_election", "color_election_distance",
+        "wave_election", "wave_election_distance",
+        # time.hpp
+        "constant", "constant_after", "counter", "delay",
+        "round_since", "time_since", "timed_decay", "exponential_filter",
+        "shared_clock", "shared_decay", "shared_filter",
+        "toggle", "toggle_filter",
+    })
+
     def _parse_call_expr(self) -> AstNode:
-        """Parse: NAME ( args ) | atom"""
-        if self._current_token() in ("nbr", "old", "max_hood", "min_hood", "fold_hood"):
+        """Parse: PRIMITIVE ( argList? ) | atom"""
+        if self._current_token() in AggregateLanguageParser._ALL_PRIMITIVES:
             primitive = self._consume()
             self._consume("(")
-            arg = self._parse_expr()
+            args: List[AstNode] = []
+            if self._current_token() != ")":
+                args.append(self._parse_expr())
+                while self._current_token() == ",":
+                    self._consume(",")
+                    args.append(self._parse_expr())
             self._consume(")")
-
-            return AstNode(
-                node_type="call",
-                name=primitive,
-                children=[arg],
-            )
+            return AstNode(node_type="call", name=primitive, children=args)
 
         return self._parse_atom()
 
@@ -262,6 +308,161 @@ class AggregateLanguageParser:
             return AstNode(node_type="name", value=name)
 
         raise ParserError(f"Unexpected token: {token}")
+
+
+class AntlrParser:
+    """
+    ANTLR4-backed parser for aggregate programs.
+
+    Uses the generated stubs in ``__antlr_gen/`` when the ``antlr4`` Python
+    runtime is installed; otherwise falls back to ``AggregateLanguageParser``.
+
+    Generate stubs once with::
+
+        java -jar antlr-4.13.1-complete.jar \\
+            -Dlanguage=Python3 \\
+            -o src/fcpp_bridge/grammar/__antlr_gen \\
+            src/fcpp_bridge/grammar/AggregateProgram.g4
+
+    Install runtime::
+
+        pip install antlr4-python3-runtime==4.13.1
+    """
+
+    def __init__(self):
+        self._antlr_available = self._check_antlr()
+        self._fallback = AggregateLanguageParser()
+
+    @staticmethod
+    def _check_antlr() -> bool:
+        """Return True if antlr4 runtime and generated stubs are both available."""
+        try:
+            import antlr4  # noqa: F401
+        except ImportError:
+            return False
+
+        try:
+            import sys
+            from pathlib import Path as _Path
+            gen_dir = str(_Path(__file__).parent / "__antlr_gen")
+            if gen_dir not in sys.path:
+                sys.path.insert(0, gen_dir)
+            from AggregateProgramLexer import AggregateProgramLexer as _  # type: ignore  # noqa: F401
+            from AggregateProgramParser import AggregateProgramParser as _  # type: ignore  # noqa: F401
+        except ImportError:
+            return False
+
+        return True
+
+    def parse_string(self, program_str: str) -> AstNode:
+        """
+        Parse aggregate program from string.
+
+        Delegates to the ANTLR4 runtime when available; falls back to the
+        hand-written ``AggregateLanguageParser`` otherwise.
+        """
+        if self._antlr_available:
+            return self._parse_with_antlr(program_str)
+        return self._fallback.parse_string(program_str)
+
+    def parse_file(self, filepath: Path) -> AstNode:
+        """Parse aggregate program from file."""
+        with open(filepath) as fh:
+            return self.parse_string(fh.read())
+
+    def _parse_with_antlr(self, program_str: str) -> AstNode:
+        """Parse via generated ANTLR4 stubs and convert to AstNode tree."""
+        import antlr4
+        from AggregateProgramLexer import AggregateProgramLexer  # type: ignore
+        from AggregateProgramParser import AggregateProgramParser  # type: ignore
+
+        input_stream = antlr4.InputStream(program_str)
+        lexer = AggregateProgramLexer(input_stream)
+        token_stream = antlr4.CommonTokenStream(lexer)
+        parser = AggregateProgramParser(token_stream)
+
+        # Attach error listener that raises ParserError
+        class _ErrorListener(antlr4.error.ErrorListener.ErrorListener):
+            def syntaxError(self, recognizer, offendingSymbol, line, column, msg, e):
+                raise ParserError(f"line {line}:{column} {msg}")
+
+        lexer.removeErrorListeners()
+        parser.removeErrorListeners()
+        lexer.addErrorListener(_ErrorListener())
+        parser.addErrorListener(_ErrorListener())
+
+        tree = parser.aggregateProgram()
+        return self._ctx_to_ast(tree)
+
+    def _ctx_to_ast(self, ctx: Any) -> AstNode:
+        """Recursively convert an ANTLR4 parse-tree context to AstNode."""
+        import antlr4
+
+        class_name = type(ctx).__name__
+
+        if class_name == "AggregateProgramContext":
+            children = [self._ctx_to_ast(c) for c in ctx.functionDef()]
+            return AstNode(node_type="program", children=children)
+
+        if class_name == "FunctionDefContext":
+            name = ctx.NAME().getText()
+            initial = self._ctx_to_ast(ctx.initialStateDef())
+            compute = self._ctx_to_ast(ctx.computeDef())
+            return AstNode(node_type="function", name=name, children=[initial, compute])
+
+        if class_name == "InitialStateDefContext":
+            expr = self._ctx_to_ast(ctx.expr())
+            return AstNode(node_type="initial_state", children=[expr])
+
+        if class_name == "ComputeDefContext":
+            expr = self._ctx_to_ast(ctx.expr())
+            return AstNode(node_type="compute", children=[expr])
+
+        if class_name in ("BinaryExprContext", "CompareExprContext"):
+            left = self._ctx_to_ast(ctx.expr(0))
+            right = self._ctx_to_ast(ctx.expr(1))
+            op = ctx.op.text
+            return AstNode(node_type="binop", value=op, children=[left, right])
+
+        if class_name == "PrimCallContext":
+            return self._ctx_to_ast(ctx.primitiveCall())
+
+        if class_name == "PrimitiveCallContext":
+            prim_name = ctx.primitive().getText() if ctx.primitive() else "fold_hood"
+            args = [self._ctx_to_ast(e) for e in ctx.expr()]
+            return AstNode(node_type="call", name=prim_name, children=args)
+
+        if class_name == "FuncCallContext":
+            return self._ctx_to_ast(ctx.functionCall())
+
+        if class_name == "FunctionCallContext":
+            name = ctx.NAME().getText()
+            args = [self._ctx_to_ast(e) for e in ctx.argList().expr()] if ctx.argList() else []
+            return AstNode(node_type="call", name=name, children=args)
+
+        if class_name == "ParenExprContext":
+            return self._ctx_to_ast(ctx.expr())
+
+        if class_name == "IntLiteralContext":
+            return AstNode(node_type="int", value=int(ctx.INT_LIT().getText()))
+
+        if class_name == "FloatLiteralContext":
+            return AstNode(node_type="float", value=float(ctx.FLOAT_LIT().getText()))
+
+        if class_name == "StringLiteralContext":
+            text = ctx.STRING_LIT().getText()
+            return AstNode(node_type="string", value=text.strip("'\""))
+
+        if class_name == "NameRefContext":
+            return AstNode(node_type="name", value=ctx.NAME().getText())
+
+        # Generic fallback: recurse into children
+        children = []
+        for i in range(ctx.getChildCount()):
+            child = ctx.getChild(i)
+            if isinstance(child, antlr4.ParserRuleContext):
+                children.append(self._ctx_to_ast(child))
+        return AstNode(node_type=class_name.replace("Context", "").lower(), children=children)
 
 
 def ast_to_dsl(ast: AstNode) -> Dict[str, Any]:

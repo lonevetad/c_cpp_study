@@ -6,23 +6,35 @@ PKG_DIR  := fcpp_py
 LIB_NAME := _fcpp_core
 OBJ_DIR  := build
 
-# Use Rust's LLD if available
-LD_LLD := $(shell ls /c/Users/ottin/.rustup/toolchains/stable-x86_64-pc-windows-msvc/lib/rustlib/x86_64-pc-windows-msvc/bin/gcc-ld/ld.lld.exe 2>/dev/null)
-ifeq ($(LD_LLD),)
-    # Fallback: try system path
-    LD_LLD := ld.lld.exe
-endif
+# ── Platform detection ────────────────────────────────────────────────────────
+# $(OS) is set to Windows_NT by Windows (including MSYS2).
+# uname -s gives Darwin on macOS, Linux on Linux.
+UNAME_S := $(shell uname -s 2>/dev/null)
 
 ifeq ($(OS),Windows_NT)
+    # Windows (MSYS2 / MinGW): produce DLL; LLD required (BFD crashes on fcpp COMDAT tables)
     LIB            := $(PKG_DIR)/$(LIB_NAME).dll
     LDFLAGS        := -shared -static-libgcc -static-libstdc++ -Wl,--gc-sections -fuse-ld=lld
     WINPTHREAD_DST := $(PKG_DIR)/libwinpthread-1.dll
     PREFIX         := $(if $(MSYSTEM_PREFIX),$(MSYSTEM_PREFIX),/ucrt64)
     RUNTIME_TARGET := $(WINPTHREAD_DST)
     CLEAN_RUNTIME   = rm -f "$(WINPTHREAD_DST)"
+else ifeq ($(UNAME_S),Darwin)
+    # macOS: produce dylib; Apple ld64 (no --gc-sections, no -static-libgcc)
+    LIB            := $(PKG_DIR)/$(LIB_NAME).dylib
+    LDFLAGS        := -dynamiclib -Wl,-dead_strip
+    RUNTIME_TARGET :=
+    CLEAN_RUNTIME   = :
 else
+    # Linux / other POSIX: produce .so; embed GCC runtime statically.
+    # Use LLD when available (recommended for large fcpp template stacks).
     LIB            := $(PKG_DIR)/$(LIB_NAME).so
-    LDFLAGS        := -shared -static-libgcc -static-libstdc++ -Wl,--gc-sections -fuse-ld=lld
+    _LLD           := $(shell command -v lld 2>/dev/null)
+    ifneq ($(_LLD),)
+        LDFLAGS    := -shared -static-libgcc -static-libstdc++ -Wl,--gc-sections -fuse-ld=lld
+    else
+        LDFLAGS    := -shared -static-libgcc -static-libstdc++ -Wl,--gc-sections
+    endif
     RUNTIME_TARGET :=
     CLEAN_RUNTIME   = :
 endif

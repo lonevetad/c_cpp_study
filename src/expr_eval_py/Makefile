@@ -19,24 +19,36 @@ ifeq ($(PYTHON),)
     $(error Python not found on PATH. Install Python and ensure 'python3' or 'python' is accessible.)
 endif
 
+# $(OS) is Windows_NT on Windows (including MSYS2); uname -s gives Darwin/Linux.
+UNAME_S := $(shell uname -s 2>/dev/null)
+
 ifeq ($(OS),Windows_NT)
     # Windows: produce a DLL; embed GCC runtime statically.
     LIB_SUFFIX     := .dll
     LDFLAGS        := -shared -static-libgcc -static-libstdc++
-    
+
     # Use MSYSTEM_PREFIX (e.g., /ucrt64)
     PREFIX         := $(if $(MSYSTEM_PREFIX),$(MSYSTEM_PREFIX),/ucrt64)
     WINPTHREAD_SRC := $(PREFIX)/bin/libwinpthread-1.dll
     WINPTHREAD_DST := expr_eval_py/libwinpthread-1.dll
-    
+
     RUNTIME_TARGET := $(WINPTHREAD_DST)
     CLEAN_RUNTIME  = rm -f "$(WINPTHREAD_DST)"
+else ifeq ($(UNAME_S),Darwin)
+    # macOS: produce a .dylib; Apple ld64 doesn't support -static-libgcc.
+    # -fPIC is the default on macOS (position-independent is always on).
+    LIB_SUFFIX     := .dylib
+    CXXFLAGS       += -fPIC
+    LDFLAGS        := -dynamiclib -Wl,-dead_strip
+
+    RUNTIME_TARGET :=
+    CLEAN_RUNTIME  = :
 else
-    # Linux: produce a .so; -fPIC is mandatory for shared libs.
+    # Linux / other POSIX: produce a .so; -fPIC is mandatory for shared libs.
     LIB_SUFFIX     := .so
     CXXFLAGS       += -fPIC
     LDFLAGS        := -shared -static-libgcc -static-libstdc++
-    
+
     RUNTIME_TARGET :=
     CLEAN_RUNTIME  = :
 endif

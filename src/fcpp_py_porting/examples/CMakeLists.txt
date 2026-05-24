@@ -13,22 +13,20 @@ add_executable(chain_decaying
     chain_decaying.cpp
 )
 
-# Link OpenGL/X11 (required by fcpp for GUI)
-if(NOT WIN32)
+# Link OpenGL (all platforms) + X11 (Linux only — macOS and Windows have no X11)
+if(APPLE)
+    # macOS: OpenGL via system framework; X11 not available by default
+    find_package(OpenGL REQUIRED)
+    target_link_libraries(chain_decaying OpenGL::GL)
+elseif(WIN32)
+    # Windows: OpenGL via CMake's FindOpenGL module
+    find_package(OpenGL REQUIRED)
+    target_link_libraries(chain_decaying OpenGL::GL)
+else()
+    # Linux / other POSIX: fcpp GUI requires both X11 and OpenGL
     find_package(X11 REQUIRED)
     find_package(OpenGL REQUIRED)
-    target_link_libraries(chain_decaying
-        X11::X11
-        OpenGL::GL
-    )
-endif()
-
-# For Windows, OpenGL comes from CMake
-if(WIN32)
-    find_package(OpenGL REQUIRED)
-    target_link_libraries(chain_decaying
-        OpenGL::GL
-    )
+    target_link_libraries(chain_decaying X11::X11 OpenGL::GL)
 endif()
 
 

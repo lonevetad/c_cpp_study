@@ -7,9 +7,12 @@ from pathlib import Path
 
 _pkg = Path(__file__).parent
 
-if platform.system() == "Windows":
+_system = platform.system()
+if _system == "Windows":
     os.add_dll_directory(str(_pkg))
     _lib = ctypes.CDLL(str(_pkg / "_fcpp_core.dll"))
+elif _system == "Darwin":
+    _lib = ctypes.CDLL(str(_pkg / "_fcpp_core.dylib"))
 else:
     _lib = ctypes.CDLL(str(_pkg / "_fcpp_core.so"))
 
