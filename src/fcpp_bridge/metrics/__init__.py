@@ -141,7 +141,7 @@ class MetricsCollector:
 
     def remove_callback(self, callback: Callable) -> None:
         """Remove a previously registered callback."""
-        self._callbacks = [c for c in self._callbacks if c is not callback]
+        self._callbacks = [c for c in self._callbacks if c != callback]
 
     # ------------------------------------------------------------------
     # Analysis

@@ -7,7 +7,7 @@ Production-ready bridge between Python and FCPP (Field Calculus C++14 framework)
 ```bash
 cd <repo-root>
 PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -v
-# 379 pass, 0 fail
+# 432 pass, 0 fail
 ```
 
 ## Overview
@@ -20,6 +20,7 @@ PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/test
 4. **Execute** the compiled swarms
 5. **Communicate** with swarms via flexible IPC (sockets, HTTP, gRPC)
 6. **Monitor** swarm metrics over time (state history, statistics, export)
+7. **Visualize** swarm output live or as a post-hoc replay (matplotlib or terminal)
 
 ## Project Phases
 
@@ -31,8 +32,11 @@ PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/test
 | 4     | Runtime & IPC             | ✅ Done  | 55    |
 | 5     | Language parser           | ✅ Done  | 47    |
 | 6     | Scaling & backends        | ✅ Done  | 35    |
+| 7     | Visualization & ANTLR gen | ✅ Done  | 16    |
+| v0.8  | Extended type system      | ✅ Done  | +37   |
+| v0.9  | OOP/Prototype/logging     | ✅ Done  | +50   |
 
-**Total: 379 tests — 379 pass, 0 fail.**
+**Total: 482 tests — 482 pass, 0 fail.**
 
 ## Architecture
 
@@ -61,10 +65,11 @@ fcpp_bridge/
 ├── compiler/           Phase 3: Build pipeline & caching
 ├── runtime/            Phase 4: C++ runtime library (generated headers)
 ├── ipc/                Phase 4B: Communication backends
-├── grammar/            Phase 5: Language parser (recursive-descent)
+├── grammar/            Phase 5: Language parser (recursive-descent + ANTLR gen)
 ├── metrics/            Phase 6: Metrics collection & export
+├── visualization/      Phase 7: Live / replay GUI plugin
 ├── examples/           Demo programs
-├── tests/              Pytest test suite (268 tests)
+├── tests/              Pytest test suite (395 tests)
 ├── cpp_transpiled/     ← Generated C++ code (git-ignored)
 └── build/              ← Compiled binaries (git-ignored)
 ```
@@ -75,11 +80,15 @@ fcpp_bridge/
 - **[Design Decisions](../bridge.md#part-6-key-design-decisions)** — Why this approach
 - **[Phase-by-Phase Rollout](../bridge.md#part-5-phase-by-phase-rollout)** — Detailed checklist
 - **[Glossary](../bridge.md#appendix-glossary)** — Terminology
+- **[VISUALIZATION.md](VISUALIZATION.md)** — Phase 7: ANTLR generation & visualization plugin
 
 ## What Works
 
 - ✅ `@aggregate_function` decorator with full pre-transpilation validation
-- ✅ `AggregateType.infer()`: Python types → C++ types (primitives, list, tuple, dict, dataclass)
+- ✅ `AggregateType.infer()`: Python types → C++ types (primitives, list, tuple, dict, set, frozenset, Optional, Union, dataclass, TypeVar, TemplateParam; full C++14–C++23 proxy classes)
+- ✅ `CppType`: explicit constructor (`__init__` with keyword-only args), `required_includes`, `cpp_std`, `is_template` fields; defensive copy of include list
+- ✅ 14 C++ proxy annotations: `CppVector`, `CppArray[T,N]`, `CppSet`, `CppUnorderedSet`, `CppMultiSet`, `CppMap`, `CppUnorderedMap`, `CppMultiMap`, `CppPair` (C++14); `CppOptional`, `CppVariant`, `CppAny` (C++17); `CppSpan` (C++20); `CppExpected`, `CppMdSpan` (C++23)
+- ✅ `TemplateParam("T")` — unresolved template type parameter (`typename T`)
 - ✅ `PythonAstVisitor`: all binary/comparison operators, built-ins (max, min, len, sum), attrs, subscripts; all 64 FCPP primitives inject `CALL` and auto-add coordination headers
 - ✅ `CppCodeBuilder` + `Transpiler.generate()` → complete C++ source string
 - ✅ `ProgramCache` (SHA-256 hash, manifest, persistent across runs)
@@ -97,11 +106,23 @@ fcpp_bridge/
 - ✅ `StateHistory` (ring-buffer, per-node history, negative indexing)
 - ✅ `MetricsSummary` (mean/min/max/std per round, total time, avg node count)
 - ✅ `export_json` / `export_csv`
+- ✅ `generate_antlr.py` (script to compile grammar → Python3 ANTLR4 stubs; `--download` flag fetches jar)
+- ✅ `TextDashboard` (terminal visualizer, no external deps)
+- ✅ `SwarmVisualizer` (live matplotlib charts: node count + mean/min/max band)
+- ✅ `create_visualizer` factory (auto-selects best available backend)
 
 ## Known Gaps (Future Work)
 
-- Phase 5: Run `antlr4` tool to generate Python stubs from `AggregateProgram.g4`
-- Phase 6: GUI/visualization plugin; multi-swarm coordination UI
+- Phase 7: Multi-swarm coordination UI
+- Phase 7: Run `generate_antlr.py --download` to activate the ANTLR4 parser path (requires Java 11+)
+
+## v0.9 — OOP / Prototype / Logging refactor
+
+- **`Primitive` base**: all 64 primitive classes inherit `Primitive`; `clone()` / `clone_with(**changes)` implement the Prototype pattern; `has_callable_args` + `callable_arg_positions` mark G&& callable arguments
+- **`ValidationRule` ABC + `ValidationPipeline`**: composable validation rules with `AggregateValidator` delegating internally; custom rules can be injected via `AggregateValidator.set_pipeline()`
+- **Class-based mixins**: `_MixinGossip`, `_MixinBroadcast`, `_MixinCollection`, `_MixinElection`, `_MixinTime`, `_MixinGeometry` as proper classes; dynamic subclassing via `type(name, (mixin_cls, cls), {...})`
+- **`visit_Lambda`**: `PythonAstVisitor` now transpiles Python lambdas to C++14 generic lambdas (`[=](auto a, auto b) { return …; }`) for FCPP `G&&` callable parameters
+- **Logging**: `log.py` flexible logging module; level-based `set_bridge_logging(bool)`; integrated into validators, decorators, and transpiler
 
 ## Primitive Coverage Audit
 
@@ -114,7 +135,7 @@ See **[PRIMITIVE_AUDIT.md](PRIMITIVE_AUDIT.md)** for the full record of how all 
 | Scope       | Vec2/Vec3 + simulation callbacks | Full DSL + code gen + IPC       |
 | Compilation | Once (build time)                | Dynamic (per program)           |
 | Callback    | Python calls into C++            | C++ runs independently          |
-| Status      | Mature (Phase 2 tested)          | All 6 phases implemented (v0.6) |
+| Status      | Mature (Phase 2 tested)          | All 7 phases + type system (v0.8) |
 
 **Note**: fcpp_py_porting is a reference/learning project. fcpp_bridge is the production design.
 

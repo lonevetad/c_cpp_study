@@ -1,6 +1,7 @@
 """FCPP Python DSL — Phase 1: DSL layer for aggregate functions."""
 
 from .primitives import (
+    Primitive,
     Field,
     Neighborhood,
     OldValue,
@@ -86,10 +87,40 @@ from .decorators import (
     mixin_election,
     mixin_time,
 )
-from .types import AggregateType, CppType
-from .validators import AggregateValidator, ValidationError
+from .types import (
+    AggregateType,
+    CppType,
+    TemplateParam,
+    # C++14 container proxies
+    CppVector,
+    CppArray,
+    CppSet,
+    CppUnorderedSet,
+    CppMultiSet,
+    CppMap,
+    CppUnorderedMap,
+    CppMultiMap,
+    CppPair,
+    # C++17 proxies
+    CppOptional,
+    CppVariant,
+    CppAny,
+    # C++20 proxy
+    CppSpan,
+    # C++23 proxies
+    CppExpected,
+    CppMdSpan,
+)
+from .validators import (
+    AggregateValidator,
+    ValidationError,
+    ValidationRule,
+    ValidationPipeline,
+)
 
 __all__ = [
+    # Base class
+    "Primitive",
     # Original primitives
     "Field", "Neighborhood", "OldValue", "StateValue",
     "FoldHood", "MinHood", "MaxHood", "CountHood",
@@ -128,8 +159,30 @@ __all__ = [
     # Types & validation
     "AggregateType",
     "CppType",
+    "TemplateParam",
+    # C++14 container proxies
+    "CppVector",
+    "CppArray",
+    "CppSet",
+    "CppUnorderedSet",
+    "CppMultiSet",
+    "CppMap",
+    "CppUnorderedMap",
+    "CppMultiMap",
+    "CppPair",
+    # C++17 proxies
+    "CppOptional",
+    "CppVariant",
+    "CppAny",
+    # C++20 proxy
+    "CppSpan",
+    # C++23 proxies
+    "CppExpected",
+    "CppMdSpan",
     "AggregateValidator",
     "ValidationError",
+    "ValidationRule",
+    "ValidationPipeline",
 ]
 
 __version__ = "0.1.0"

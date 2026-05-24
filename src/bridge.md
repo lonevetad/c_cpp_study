@@ -1,7 +1,7 @@
 # FCPP Python-to-C++ Bridge — Comprehensive Design Document
 
-**Status**: All 6 Phases Implemented (v0.6)  
-**Last Updated**: 2026-05-23  
+**Status**: All 7 Phases Implemented (v0.9)  
+**Last Updated**: 2026-05-24  
 **Project**: `fcpp_bridge/` (implemented)
 
 ---
@@ -409,7 +409,7 @@ src/fcpp_bridge/
 - [x] AST visitor → C++ emitter (`PythonAstVisitor` for all ops, calls, constants, attrs, subscripts)
 - [x] Transpile simple expressions (literals, binary ops: +−×÷%, **, all comparisons)
 - [x] Transpile primitives (nbr, old, fold_hood via AstVisitor; full in-body transpilation is a TODO stub)
-- [x] Type inference for generated C++ (`AggregateType.infer` for all primitives, list, tuple, dict, dataclass)
+- [x] Type inference for generated C++ (`AggregateType.infer` for all primitives, list, tuple, dict, set, frozenset, Optional, Union, dataclass; C++14–C++23 proxy types; TypeVar/TemplateParam)
 - [x] Generated code compiles (even if incorrect at runtime)
 - [x] 50+ tests — **55 tests**
 
@@ -578,7 +578,7 @@ src/fcpp_bridge/
 
 ## Part 10: Getting Started
 
-### Completed (v0.6)
+### Completed (v0.7)
 
 1. [x] Write this architecture document
 2. [x] Create `fcpp_bridge/` project structure
@@ -589,13 +589,35 @@ src/fcpp_bridge/
 7. [x] Phase 5 — Language parser, AST→DSL converter, AntlrParser wrapper (47 tests)
 8. [x] Phase 6 — MetricsCollector, scaling tests, HTTP/gRPC backends (35 tests)
 9. [x] Primitive Coverage Audit — all 64 FCPP coordination primitives across DSL/transpiler/grammar (+162 tests)
+10. [x] Phase 7 — Visualization plugin + ANTLR generation script (16 tests)
+    - `grammar/generate_antlr.py`: downloads ANTLR jar, runs Java code-gen, writes `__antlr_gen/`; activates `AntlrParser._antlr_available`
+    - `grammar/requirements_antlr.txt`: `antlr4-python3-runtime==4.13.1`
+    - `visualization/`: `VisualizerBase`, `TextDashboard` (no-dep terminal output), `SwarmVisualizer` (live matplotlib: node count + mean/min/max band), `create_visualizer` factory (auto-fallback)
+    - `VISUALIZATION.md`: full how-to for ANTLR generation + visualization plugin
+11. [x] Extended C++ type system refactor (v0.8) — 37 new tests (+1 detach fix)
+    - `CppType` converted from `@dataclass` to explicit `__init__` with keyword-only parameters; added `is_template`, `cpp_std`, `required_includes` fields; defensive copy in constructor; explicit `__repr__`, `__eq__`, `__hash__`
+    - `_CppProxy` base uses `__init_subclass__` hook so subclasses declare their C++ template via class keyword args instead of manual variable assignment; each subclass owns a defensive copy of `_required_includes`
+    - `_BoundCppProxy` uses explicit `__init__` (no `__slots__`)
+    - 14 proxy classes covering C++14–C++23: `CppVector`, `CppArray[T,N]`, `CppSet`, `CppUnorderedSet`, `CppMultiSet`, `CppMap`, `CppUnorderedMap`, `CppMultiMap`, `CppPair`, `CppOptional`, `CppVariant`, `CppAny`, `CppSpan`, `CppExpected`, `CppMdSpan`
+    - `TemplateParam("T")` for unresolved template type parameters
+    - `AggregateType.infer()` extended for `set[T]`, `frozenset[T]`, `Optional[T]`, `Union[T1,T2,…]`, `TypeVar`, `bytes`
+    - Transpiler auto-emits `required_includes` headers for the inferred state type
+    - Fixed `MetricsCollector.remove_callback` using `!=` (bound-method equality) instead of `is not`
+12. [x] Full OOP + Prototype refactor (v0.9) — 50 new tests
+    - `Primitive` base class in `python_dsl/primitives.py`: `__repr__`, `__eq__` (callable attrs by identity), `__hash__`, `clone()` (shallow copy), `clone_with(**changes)` — Prototype design pattern
+    - All 64 FCPP primitive classes now inherit `Primitive` (or `Primitive, Generic[T]`); zero-arg classes (`NbrUid`, `SharedClock`, `StateValue`, `CountHood`, `HopCount`) get explicit `__init__`
+    - `has_callable_args: bool` + `callable_arg_positions: tuple` class-level metadata on every primitive that accepts a C++ `G&&` callable: `FoldHood(1)`, `Spawn(0)`, `Gossip(1)`, `SpCollection(3)`, `MpCollection(3,4)`, `WmpCollection(3,4)`, `OldNbr(1)`, `Split(1)`, `AbfDistance(1)`, `BisDistance(3)`, `FlexDistance(5)`, `BisKsourceBroadcast(5)`, `ListIdemCollection(6)`, `ListArithCollection(6)`, `WaveElection(1)`, `WaveElectionDistance(1)`
+    - `log.py`: flexible logging — `configure_bridge_logging(level, stream, filename, fmt, timed)`, `set_bridge_logging(bool)` (level-based silencing — `_root.disabled` is not used because it is bypassed by `callHandlers` during propagation), `is_bridge_logging_enabled()`, `get_logger(name)`; integrated into `validators.py`, `decorators.py`, `transpiler/__init__.py`
+    - `validators.py`: `ValidationRule` ABC (abstract `check(cls) -> list[str]`); concrete rules `MarkerRule`, `RequiredMethodsRule`, `InitialStateRule`, `ComputeSignatureRule`, `DeprecatedMethodRule`; `ValidationPipeline` (runs rules in sequence, raises on first `ValidationError`); `AggregateValidator.set_pipeline()` / `reset_pipeline()` for test injection; `AggregateValidator` delegates to pipeline internally
+    - `decorators.py`: six `_Mixin*` classes (`_MixinGossip`, `_MixinBroadcast`, `_MixinCollection`, `_MixinElection`, `_MixinTime`, `_MixinGeometry`) as proper OOP base classes; `_apply_mixin()` helper creates a new class via `type(name, (mixin_cls, cls), {...})` (dynamic subclassing); mixin decorators delegate to `_apply_mixin`
+    - `transpiler/__init__.py`: `PythonAstVisitor.visit_Lambda` — translates Python lambdas to C++14 generic lambdas `[=](auto a, auto b) { return (a + b); }` for `G&&` callable parameters; `capture-by-value [=]` safe because FCPP calls the callable immediately within scope; integrated logging
 
-**Total: 379 tests — 379 pass, 0 fail. (+162 from full 64-primitive coverage audit 2026-05-23/24)**
+**Total: 482 tests — 482 pass, 0 fail. (+50 from OOP/Prototype/logging/callable refactor 2026-05-24)**
 
 ### Remaining / Future Work
 
-- Phase 5: Run `antlr4` tool to generate Python stubs from `AggregateProgram.g4`
-- Phase 6: GUI/visualization plugin; multi-swarm coordination UI (DeviceManager backend done)
+- Multi-swarm coordination UI (DeviceManager backend done; frontend TBD)
+- Activate ANTLR4 path: run `grammar/generate_antlr.py --download` (requires Java 11+)
 
 ### Run Tests
 

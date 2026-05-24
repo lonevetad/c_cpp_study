@@ -7,6 +7,9 @@ from pathlib import Path
 
 from fcpp_bridge.python_dsl.validators import AggregateValidator, ValidationError
 from fcpp_bridge.python_dsl.types import AggregateType, CppType
+from fcpp_bridge.log import get_logger
+
+_log = get_logger(__name__)
 
 
 class TranspilationError(Exception):
@@ -221,6 +224,19 @@ class PythonAstVisitor(ast.NodeVisitor):
         index = self.visit(node.slice)
         return f"{obj}[{index}]"
 
+    def visit_Lambda(self, node: ast.Lambda) -> str:
+        """Translate a Python lambda to a C++14 generic lambda for G&& parameters.
+
+        ``lambda a, b: a + b``  →  ``[=](auto a, auto b) { return (a + b); }``
+
+        Capture-by-value (``[=]``) is safe because FCPP calls the callable
+        immediately within the same scope — nothing is stored after return.
+        """
+        params = ", ".join(f"auto {arg.arg}" for arg in node.args.args)
+        body = self.visit(node.body)
+        _log.debug("Transpiling lambda(%s) → [=](%s) { return %s; }", params, params, body)
+        return f"[=]({params}) {{ return {body}; }}"
+
     def generic_visit(self, node: ast.AST) -> str:
         """Fallback for unsupported nodes."""
         self.errors.append(f"Unsupported AST node: {type(node).__name__}")
@@ -240,22 +256,26 @@ class Transpiler:
         """Pre-flight checks."""
         warnings = AggregateValidator.validate(self.aggregate_class)
         for warning in warnings:
-            print(f"[DSL] Warning: {warning}")
+            _log.warning("DSL: %s", warning)
 
         self.state_type = AggregateType.infer(
             AggregateValidator.get_state_type(self.aggregate_class)
         )
 
     def generate(self) -> str:
-        """
-        Generate C++ code for this aggregate function.
+        """Generate C++ code for this aggregate function.
 
         Returns complete C++ program as string.
         """
+        _log.debug("Generating C++ for %s", self.aggregate_class.__name__)
         builder = CppCodeBuilder()
 
         # Add standard FCPP includes
         builder.add_include("<fcpp/fcpp.hpp>")
+
+        # Auto-add headers required by the state type (e.g. <optional>, <set>)
+        for inc in (self.state_type.required_includes or []):
+            builder.add_include(inc)
 
         # Add state type declaration if custom struct
         if self.state_type.is_struct and self.state_type.fields:

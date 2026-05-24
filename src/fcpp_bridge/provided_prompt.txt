@@ -21,7 +21,38 @@ If so, either refactor the "fcpp_py_porting" project or create a new project to 
 
 
 
-Read those folders and their paarent folder, scanning for "*.cpp" and "*.hpp" files. Look for the C++ source files where aggregate functions are defined and used; in parrtucular, consider al functions in which the parameter "CALL" was provided, all functions having "ARGS" as one of its parameters and all functions whose body contains "CODE". Gather and list all of those functions; that list should include the following function names: "nbr", "old", "spawn", "follow_target", "min_hood", "max_hood", "gossip", "sp_collection", "mp_collection", "wmp_collection", "count_hood", "bis_distance", "rectangle_walk", "abf_distance", and "broadcast".
+Read those folders and their parent folder, scanning for "*.cpp" and "*.hpp" files. Look for the C++ source files where aggregate functions are defined and used; in parrtucular, consider al functions in which the parameter "CALL" was provided, all functions having "ARGS" as one of its parameters and all functions whose body contains "CODE". Gather and list all of those functions; that list should include the following function names: "nbr", "old", "spawn", "follow_target", "min_hood", "max_hood", "gossip", "sp_collection", "mp_collection", "wmp_collection", "count_hood", "bis_distance", "rectangle_walk", "abf_distance", and "broadcast".
 After that, check if the "fcpp_bridge" folder and the project inside it contains the Python definition, the C++ transpilation and the grammar definition of those functions. If any of those function is missing, then refactor everything to include them. Other than that, take in consideration any definition of "primitive","primitiveCall" and "aggregate function" to perform those checks.
 In the end, write a ".md" file describing this process.
-Lastly, save Your (ClaudeCode) memory and update all relevant ".md" files.
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+
+
+Check all folders previously mentioned and list all aggregate functions.
+
+
+
+
+recover the previous session, then perform the long-term work item: the ANTLR code generation, implement a GUI plugin (that can be a module and one of the possible consumers of the output data that the Python code caller wiould receive from the compiled C++ code). Write a ".md" file describing this process, then update the relevant ".md" files and save your memory.
+
+
+
+Refactor the C++ types defined in Python to include:
+- both the generics and the templates that C++ allows (from C++14 to C++26)
+- tuples
+- arrays, sets and maps from the std library
+
+
+In Python's source file "types.py", use the constructors (and OOP principles) to properly assign the values of instance variables.
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+
+
+
+
+
+Perform these refactorings (accounting for all Phases):
+- Check for any primitives and/or aggregate functions for those that can accept a function or a lambda function as argument (it's usually defined as "G&&" in C++); if they are not already accounted for, refactor all relevant Phases to account for those variants.
+- Add a flexible logging system (like standard output, a file, etc.) using the best modern standard and that can be toggled on or off. 
+- extensively use the OOP ("Object Oriented Programming") and prototype programmings, both with the best modern standard, for all steps and Phases (even for Validation).
+
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+

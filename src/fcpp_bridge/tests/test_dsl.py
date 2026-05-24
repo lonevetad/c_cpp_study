@@ -1043,5 +1043,536 @@ def test_mixin_time_shared_clock():
     assert isinstance(result, SharedClock)
 
 
+# ============================================================================
+# Test 11: Extended C++ type system
+# ============================================================================
+
+from typing import Optional, Union
+from typing import TypeVar as TypingTypeVar
+from dataclasses import dataclass as dc
+from fcpp_bridge.python_dsl import (
+    AggregateType, CppType, TemplateParam,
+    CppVector, CppArray,
+    CppSet, CppUnorderedSet, CppMultiSet,
+    CppMap, CppUnorderedMap, CppMultiMap,
+    CppPair, CppOptional, CppVariant, CppAny,
+    CppSpan, CppExpected, CppMdSpan,
+)
+
+
+# ---- scalar additions -------------------------------------------------------
+
+def test_type_inference_str_includes():
+    ct = AggregateType.infer(str)
+    assert ct.name == "std::string"
+    assert "<string>" in (ct.required_includes or [])
+
+
+def test_type_inference_bytes():
+    ct = AggregateType.infer(bytes)
+    assert "uint8_t" in ct.name
+    assert "<cstdint>" in (ct.required_includes or [])
+
+
+# ---- set / frozenset --------------------------------------------------------
+
+def test_type_inference_set():
+    ct = AggregateType.infer(set[float])
+    assert ct.name == "std::set<double>"
+    assert "<set>" in (ct.required_includes or [])
+    assert AggregateType.is_container(ct)
+
+
+def test_type_inference_frozenset():
+    ct = AggregateType.infer(frozenset[int])
+    assert ct.name == "std::set<int>"
+    assert "<set>" in (ct.required_includes or [])
+
+
+def test_type_inference_set_no_args():
+    ct = AggregateType.infer(set)
+    assert "set" in ct.name
+
+
+# ---- Optional / Union -------------------------------------------------------
+
+def test_type_inference_optional():
+    ct = AggregateType.infer(Optional[int])
+    assert ct.name == "std::optional<int>"
+    assert ct.cpp_std == "c++17"
+    assert "<optional>" in (ct.required_includes or [])
+    assert AggregateType.is_container(ct)
+
+
+def test_type_inference_union_two():
+    ct = AggregateType.infer(Union[int, float])
+    assert ct.name == "std::variant<int, double>"
+    assert ct.cpp_std == "c++17"
+    assert "<variant>" in (ct.required_includes or [])
+
+
+def test_type_inference_union_with_none_is_optional():
+    ct = AggregateType.infer(Optional[float])
+    assert ct.name == "std::optional<double>"
+    assert ct.cpp_std == "c++17"
+
+
+def test_type_inference_union_three():
+    ct = AggregateType.infer(Union[int, float, bool])
+    assert ct.name == "std::variant<int, double, bool>"
+    assert "<variant>" in (ct.required_includes or [])
+
+
+# ---- TypeVar / TemplateParam ------------------------------------------------
+
+def test_type_inference_typevar():
+    T = TypingTypeVar("T")
+    ct = AggregateType.infer(T)
+    assert ct.name == "T"
+    assert ct.is_template is True
+    assert ct.is_primitive is False
+
+
+def test_template_param_to_cpp_type():
+    tp = TemplateParam("State")
+    ct = tp.to_cpp_type()
+    assert ct.name == "State"
+    assert ct.is_template is True
+
+
+# ---- C++14 container proxies ------------------------------------------------
+
+def test_cpp_vector_proxy():
+    ct = AggregateType.infer(CppVector[int])
+    assert ct.name == "std::vector<int>"
+    assert "<vector>" in (ct.required_includes or [])
+
+
+def test_cpp_array_proxy():
+    ct = AggregateType.infer(CppArray[float, 3])
+    assert ct.name == "std::array<double, 3>"
+    assert "<array>" in (ct.required_includes or [])
+
+
+def test_cpp_array_requires_two_args():
+    with pytest.raises(TypeError):
+        AggregateType.infer(CppArray[float])
+
+
+def test_cpp_array_size_must_be_int():
+    with pytest.raises(TypeError):
+        AggregateType.infer(CppArray[float, 3.0])
+
+
+def test_cpp_set_proxy():
+    ct = AggregateType.infer(CppSet[int])
+    assert ct.name == "std::set<int>"
+    assert "<set>" in (ct.required_includes or [])
+
+
+def test_cpp_unordered_set_proxy():
+    ct = AggregateType.infer(CppUnorderedSet[str])
+    assert ct.name == "std::unordered_set<std::string>"
+    assert "<unordered_set>" in (ct.required_includes or [])
+
+
+def test_cpp_multiset_proxy():
+    ct = AggregateType.infer(CppMultiSet[float])
+    assert ct.name == "std::multiset<double>"
+    assert "<set>" in (ct.required_includes or [])
+
+
+def test_cpp_map_proxy():
+    ct = AggregateType.infer(CppMap[str, int])
+    assert ct.name == "std::map<std::string, int>"
+    assert "<map>" in (ct.required_includes or [])
+
+
+def test_cpp_unordered_map_proxy():
+    ct = AggregateType.infer(CppUnorderedMap[str, float])
+    assert ct.name == "std::unordered_map<std::string, double>"
+    assert "<unordered_map>" in (ct.required_includes or [])
+
+
+def test_cpp_multimap_proxy():
+    ct = AggregateType.infer(CppMultiMap[str, int])
+    assert ct.name == "std::multimap<std::string, int>"
+    assert "<map>" in (ct.required_includes or [])
+
+
+def test_cpp_pair_proxy():
+    ct = AggregateType.infer(CppPair[int, float])
+    assert ct.name == "std::pair<int, double>"
+    assert "<utility>" in (ct.required_includes or [])
+
+
+# ---- C++17 proxies ----------------------------------------------------------
+
+def test_cpp_optional_proxy():
+    ct = AggregateType.infer(CppOptional[int])
+    assert ct.name == "std::optional<int>"
+    assert ct.cpp_std == "c++17"
+    assert "<optional>" in (ct.required_includes or [])
+
+
+def test_cpp_variant_proxy():
+    ct = AggregateType.infer(CppVariant[int, float, bool])
+    assert ct.name == "std::variant<int, double, bool>"
+    assert ct.cpp_std == "c++17"
+    assert "<variant>" in (ct.required_includes or [])
+
+
+def test_cpp_variant_requires_two_args():
+    with pytest.raises(TypeError):
+        AggregateType.infer(CppVariant[int])
+
+
+def test_cpp_any_direct():
+    ct = AggregateType.infer(CppAny)
+    assert ct.name == "std::any"
+    assert ct.cpp_std == "c++17"
+    assert "<any>" in (ct.required_includes or [])
+
+
+def test_cpp_any_rejects_subscript():
+    with pytest.raises(TypeError):
+        AggregateType.infer(CppAny[int])
+
+
+# ---- C++20 proxy ------------------------------------------------------------
+
+def test_cpp_span_proxy():
+    ct = AggregateType.infer(CppSpan[float])
+    assert ct.name == "std::span<double>"
+    assert ct.cpp_std == "c++20"
+    assert "<span>" in (ct.required_includes or [])
+
+
+# ---- C++23 proxies ----------------------------------------------------------
+
+def test_cpp_expected_proxy():
+    ct = AggregateType.infer(CppExpected[int, str])
+    assert ct.name == "std::expected<int, std::string>"
+    assert ct.cpp_std == "c++23"
+    assert "<expected>" in (ct.required_includes or [])
+
+
+def test_cpp_mdspan_proxy():
+    ct = AggregateType.infer(CppMdSpan[float])
+    assert ct.name == "std::mdspan<double>"
+    assert ct.cpp_std == "c++23"
+    assert "<mdspan>" in (ct.required_includes or [])
+
+
+# ---- nested / composed types ------------------------------------------------
+
+def test_nested_optional_in_list():
+    ct = AggregateType.infer(list[CppOptional[int]])
+    assert "std::vector" in ct.name
+    assert "std::optional" in ct.name
+    includes = ct.required_includes or []
+    assert "<vector>" in includes
+    assert "<optional>" in includes
+
+
+def test_nested_set_in_optional():
+    ct = AggregateType.infer(Optional[CppSet[float]])
+    assert ct.name == "std::optional<std::set<double>>"
+    includes = ct.required_includes or []
+    assert "<optional>" in includes
+    assert "<set>" in includes
+
+
+def test_struct_collects_field_includes():
+    @dc
+    class Payload:
+        ids: CppSet[int]
+        score: CppOptional[float]
+
+    ct = AggregateType.infer(Payload)
+    assert ct.is_struct
+    includes = ct.required_includes or []
+    assert "<set>" in includes
+    assert "<optional>" in includes
+
+
+# ---- is_container coverage --------------------------------------------------
+
+def test_is_container_all_new_types():
+    cases = [
+        "std::array<int, 4>",
+        "std::set<double>",
+        "std::multiset<int>",
+        "std::unordered_set<int>",
+        "std::multimap<std::string, int>",
+        "std::unordered_map<std::string, double>",
+        "std::pair<int, double>",
+        "std::optional<int>",
+        "std::variant<int, double>",
+        "std::any",
+        "std::span<double>",
+        "std::expected<int, std::string>",
+        "std::mdspan<float>",
+    ]
+    for name in cases:
+        assert AggregateType.is_container(CppType(name, is_primitive=False)), \
+            f"is_container should be True for {name}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ============================================================================
+# v0.9: Primitive base class, Prototype pattern, callable-arg metadata
+# ============================================================================
+
+from fcpp_bridge.python_dsl import Primitive
+from fcpp_bridge.python_dsl.primitives import (
+    Gossip, FoldHood, Spawn, SpCollection, MpCollection, WmpCollection,
+    OldNbr, Split, FlexDistance, BisKsourceBroadcast, ListIdemCollection,
+    ListArithCollection, WaveElection, WaveElectionDistance,
+    BisDistance, AbfDistance,
+    RectangleWalk, FollowTarget, GossipMin,
+)
+
+
+def test_primitive_base_is_parent():
+    assert issubclass(RectangleWalk, Primitive)
+    assert issubclass(Gossip, Primitive)
+    assert issubclass(FoldHood, Primitive)
+    assert issubclass(GossipMin, Primitive)
+
+
+def test_primitive_has_callable_args_defaults_false():
+    p = RectangleWalk((0, 0), (10, 10), 1.0, 0.5)
+    assert p.has_callable_args is False
+    assert p.callable_arg_positions == ()
+
+
+def test_primitive_callable_arg_positions_fold_hood():
+    assert FoldHood.has_callable_args is True
+    assert FoldHood.callable_arg_positions == (1,)
+
+
+def test_primitive_callable_arg_positions_spawn():
+    assert Spawn.has_callable_args is True
+    assert Spawn.callable_arg_positions == (0,)
+
+
+def test_primitive_callable_arg_positions_gossip():
+    assert Gossip.has_callable_args is True
+    assert Gossip.callable_arg_positions == (1,)
+
+
+def test_primitive_callable_arg_positions_sp_collection():
+    assert SpCollection.has_callable_args is True
+    assert SpCollection.callable_arg_positions == (3,)
+
+
+def test_primitive_callable_arg_positions_mp_collection():
+    assert MpCollection.has_callable_args is True
+    assert MpCollection.callable_arg_positions == (3, 4)
+
+
+def test_primitive_callable_arg_positions_wmp_collection():
+    assert WmpCollection.has_callable_args is True
+    assert WmpCollection.callable_arg_positions == (3, 4)
+
+
+def test_primitive_callable_arg_positions_oldnbr():
+    assert OldNbr.has_callable_args is True
+    assert OldNbr.callable_arg_positions == (1,)
+
+
+def test_primitive_callable_arg_positions_split():
+    assert Split.has_callable_args is True
+    assert Split.callable_arg_positions == (1,)
+
+
+def test_primitive_callable_arg_positions_flex_distance():
+    assert FlexDistance.has_callable_args is True
+    assert FlexDistance.callable_arg_positions == (5,)
+
+
+def test_primitive_callable_arg_positions_bis_ksource():
+    assert BisKsourceBroadcast.has_callable_args is True
+    assert BisKsourceBroadcast.callable_arg_positions == (5,)
+
+
+def test_primitive_callable_arg_positions_list_idem():
+    assert ListIdemCollection.has_callable_args is True
+    assert ListIdemCollection.callable_arg_positions == (6,)
+
+
+def test_primitive_callable_arg_positions_wave_election():
+    assert WaveElection.has_callable_args is True
+    assert WaveElection.callable_arg_positions == (1,)
+
+
+def test_primitive_callable_arg_positions_wave_election_distance():
+    assert WaveElectionDistance.has_callable_args is True
+    assert WaveElectionDistance.callable_arg_positions == (1,)
+
+
+def test_primitive_clone_returns_equal_copy():
+    p = RectangleWalk((0, 0), (10, 10), 2.0, 1.0)
+    q = p.clone()
+    assert q is not p
+    assert q.low == p.low
+    assert q.max_v == p.max_v
+
+
+def test_primitive_clone_with_overrides():
+    p = RectangleWalk((0, 0), (10, 10), 2.0, 1.0)
+    q = p.clone_with(max_v=5.0)
+    assert q.max_v == 5.0
+    assert q.low == p.low  # unchanged
+
+
+def test_primitive_clone_with_bad_key_raises():
+    p = RectangleWalk((0, 0), (10, 10), 2.0, 1.0)
+    with pytest.raises(AttributeError):
+        p.clone_with(nonexistent=99)
+
+
+def test_primitive_repr_no_callable():
+    p = RectangleWalk((0, 0), (10, 10), 2.0, 1.0)
+    r = repr(p)
+    assert "RectangleWalk" in r
+
+
+def test_primitive_repr_with_callable():
+    g = Gossip(1.0, lambda a, b: a + b)
+    r = repr(g)
+    assert "Gossip" in r
+    assert "<callable>" in r
+
+
+def test_primitive_eq_non_callable():
+    a = RectangleWalk((0, 0), (10, 10), 2.0, 1.0)
+    b = RectangleWalk((0, 0), (10, 10), 2.0, 1.0)
+    assert a == b
+
+
+def test_primitive_eq_callable_by_identity():
+    acc = lambda a, b: a + b
+    a = Gossip(1.0, acc)
+    b = Gossip(1.0, acc)
+    c = Gossip(1.0, lambda a, b: a + b)
+    assert a == b       # same function object
+    assert a != c       # different function objects
+
+
+# ============================================================================
+# v0.9: ValidationRule ABC and ValidationPipeline
+# ============================================================================
+
+from fcpp_bridge.python_dsl.validators import (
+    ValidationRule,
+    ValidationPipeline,
+    MarkerRule,
+    RequiredMethodsRule,
+    InitialStateRule,
+    ComputeSignatureRule,
+    DeprecatedMethodRule,
+)
+
+
+def test_validation_rule_is_abstract():
+    with pytest.raises(TypeError):
+        ValidationRule()  # type: ignore
+
+
+def test_validation_pipeline_empty_passes():
+    pipeline = ValidationPipeline()
+
+    @aggregate_function
+    class Dummy:
+        def initial_state(self) -> float:
+            return 0.0
+        def compute(self, self_state: float, neighbors) -> float:
+            return self_state
+
+    assert pipeline.run(Dummy) == []
+
+
+def test_validation_pipeline_custom_rule():
+    """A custom rule can be plugged in via add_rule."""
+
+    class RequireDocstringRule(ValidationRule):
+        def check(self, cls):
+            if not cls.__doc__:
+                return [f"{cls.__name__} is missing a class docstring"]
+            return []
+
+    pipeline = ValidationPipeline([RequireDocstringRule()])
+
+    @aggregate_function
+    class WithDoc:
+        """Has a docstring."""
+        def initial_state(self) -> float:
+            return 0.0
+        def compute(self, self_state: float, neighbors) -> float:
+            return self_state
+
+    @aggregate_function
+    class NoDoc:
+        def initial_state(self) -> float:
+            return 0.0
+        def compute(self, self_state: float, neighbors) -> float:
+            return self_state
+
+    assert pipeline.run(WithDoc) == []
+    warnings = pipeline.run(NoDoc)
+    assert any("docstring" in w for w in warnings)
+
+
+def test_validation_pipeline_raises_on_bad_class():
+    pipeline = ValidationPipeline([MarkerRule()])
+
+    class NotDecorated:
+        def initial_state(self) -> float:
+            return 0.0
+        def compute(self, self_state: float, neighbors) -> float:
+            return self_state
+
+    with pytest.raises(ValidationError):
+        pipeline.run(NotDecorated)
+
+
+def test_aggregate_validator_uses_pipeline():
+    """AggregateValidator.validate still works as before via the pipeline."""
+
+    @aggregate_function
+    class ValidClass:
+        def initial_state(self) -> int:
+            return 0
+        def compute(self, self_state: int, neighbors) -> int:
+            return self_state + 1
+
+    warnings = AggregateValidator.validate(ValidClass)
+    assert isinstance(warnings, list)
+
+
+def test_aggregate_validator_custom_pipeline():
+    """set_pipeline / reset_pipeline allow pipeline replacement."""
+
+    class AlwaysWarnRule(ValidationRule):
+        def check(self, cls):
+            return ["always warn"]
+
+    original = AggregateValidator._pipeline
+    AggregateValidator.set_pipeline(ValidationPipeline([AlwaysWarnRule()]))
+    try:
+        @aggregate_function
+        class A:
+            def initial_state(self) -> float:
+                return 0.0
+            def compute(self, self_state: float, neighbors) -> float:
+                return self_state
+
+        warnings = AggregateValidator.validate(A)
+        assert "always warn" in warnings
+    finally:
+        AggregateValidator.set_pipeline(original)

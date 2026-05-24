@@ -1044,3 +1044,64 @@ def test_fcpp_primitives_total_count():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ============================================================================
+# v0.9: visit_Lambda — G&& callable support
+# ============================================================================
+
+import ast
+from fcpp_bridge.transpiler import PythonAstVisitor
+
+
+def _visit_expr(src: str) -> str:
+    """Parse *src* as a Python expression and run it through PythonAstVisitor."""
+    tree = ast.parse(src, mode="eval")
+    visitor = PythonAstVisitor()
+    return visitor.visit(tree.body)
+
+
+def test_visit_lambda_no_args():
+    cpp = _visit_expr("lambda: 42")
+    assert cpp == "[=]() { return 42; }"
+
+
+def test_visit_lambda_one_arg():
+    cpp = _visit_expr("lambda x: x + 1")
+    assert cpp == "[=](auto x) { return (x + 1); }"
+
+
+def test_visit_lambda_two_args():
+    cpp = _visit_expr("lambda a, b: a + b")
+    assert cpp == "[=](auto a, auto b) { return (a + b); }"
+
+
+def test_visit_lambda_nested_expression():
+    cpp = _visit_expr("lambda a, b: a * b + 1")
+    assert "[=](auto a, auto b)" in cpp
+    assert "return" in cpp
+
+
+def test_visit_lambda_comparison():
+    cpp = _visit_expr("lambda a, b: a < b")
+    assert "[=](auto a, auto b)" in cpp
+    assert "a < b" in cpp
+
+
+def test_fcpp_call_with_lambda_arg_fold_hood():
+    """fold_hood(CALL, init, lambda …) should produce valid C++ with [=] capture."""
+    src = "fold_hood(0, lambda a, b: a + b)"
+    cpp = _visit_expr(src)
+    assert "fold_hood(CALL, 0, [=](auto a, auto b) { return (a + b); })" == cpp
+
+
+def test_fcpp_call_with_lambda_arg_gossip():
+    src = "gossip(val, lambda a, b: a + b)"
+    cpp = _visit_expr(src)
+    assert "gossip(CALL, val, [=](auto a, auto b) { return (a + b); })" == cpp
+
+
+def test_fcpp_call_with_lambda_arg_split():
+    src = "split(key, lambda x: x * 2)"
+    cpp = _visit_expr(src)
+    assert "split(CALL, key, [=](auto x) { return (x * 2); })" == cpp
