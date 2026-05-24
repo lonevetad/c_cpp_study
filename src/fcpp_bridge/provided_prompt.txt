@@ -87,3 +87,69 @@ The data that "Python" would receive from the generated-and-compiled C++ sources
 It is mandatory that, for each C++ source file taken into account, the generated "main function" should call each aggregate function in the same manner and order as the respective original C++ source file: the functionality and algorithm must be the same.
 Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
 
+
+
+--------------------------------------
+
+
+
+check if there is any possible dependency to the "fcpp_py_porting" project: the "fcpp_bridge" project must never depend on the "fcpp_py_project", despite the similarities.
+
+
+
+
+The following is another huge process: save each step (eventually, by updating a dedicated ".md" file) to allow the process to be interrupted and resumed at any time.
+
+Check and eventually refactor the "updates consumption by listeners" part and the network initialization (if and only if it's defined specifically to the network: ignore this whole part if the "updates listener" is defined specifically to a node definition) by nodes addition.
+- the network initialization could use multiple strategies to add nodes:
+- - the nodes could be added with a random unique ID (and other settings, like the position, communication range, maximum speed and propulsion, etc.)
+- - nodes could be added during the network execution both randomly (as described above) and by providing all necessary details (for example: ID and position); the latter is used to add realistic, physical and production-related devices into the network
+- - nodes could be added with sequential ID (which are unique as a consequence) and optional starting positions
+- the network should be able to remove nodes by their ID (simulation disconnection)
+- the network should check if nodes are still "alive", with various modern techniques like "heartbeats", for example
+- usually, a single updates listener should be set, i.e. it listens to all updates of all nodes, but multiple listeners could be provided:
+- - define a "proxy" that delegates the update consumption to a flexible list of "updates listeners", either sequentially or in a parallel-asynchronous way (defined at constructor time); it allows to define kind of a pipeline. The "updates listener" addition should return an integer, which identifies that listener's ID, so that the addition caller might remove that listener in the future
+- - there should be possible to define a "per-node" set of "updates listeners" that overrides the shared listener one; to do so, use a dictionary / mapping / std::map (whatever it's required by the programming language) having the node ID as key and "update listener" as values and that is meant to deliver updates to custom listeners to the specified nodes
+- - adding another updates listener, either globally or per-node, will substitute any non-proxy listener to a "proxy" one
+
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+
+
+
+
+
+The following is another huge process: save each step (eventually, by updating a dedicated ".md" file) to allow the process to be interrupted and resumed at any time.
+
+Write a "TUTORIAL_simple.md" file and a "TUTORIAL_in_depth.md" file to explain, respectively, a simple usage of the "fcpp_bridge" library for learning purposes and a very advanced and customizable usage of the library meant primarily for production and professional purposes (even deployment into physical node-devices ).
+
+Here follows the details of the "TUTORIAL_simple":
+- it should both provide a very basic example of implemented algorithm: among 20 nodes, the source has the ID equal to 3 and destination equal to 18, and the aggregate program does the following:
+- - it calculates the distance from the source to the destination using the "bis_distance" algorithm
+- - it tracks the amount of "hops" (of nodes) from the source node to the destination along the shortest path calculated in the previous part (hint: the function "min_hood" might be used to do so)
+- - it sends all of those information to the destination (source ID, total distances, number of hops) using one of the primitive functions to send information (hint: it's likely a "channel" function)
+- the "TUTORIAL_simple" should explain each major step performed by the library, for example:
+- - definition of the aggregate program by composing Python DSL aggregate primitives,
+- - transpilation to C++ sources,
+- - serialization of those C++ sources,
+- - compilation,
+- - execution of the compiled C++ code,
+- - set-up of the "listeners" of the updates provided by the compiled C++ code,
+- - and consumption of those updates by, for example, logging them.
+- the "TUTORIAL_simple" should also focus mostly of what kind of files are needed to be manually written (and their content) and what shell commands should be performed to run the whole thing.
+
+
+The "TUTORIAL_in_depth" is similar to the "simple" one, but with additional features and details that are meant for high-performant and highly customizable production environments:
+- it should show how to set all details and settings, in particular the "updates consumption": set for all nodes a "updates_listeners_proxy" (mentioned in the previous task) which to delegate the updates consumption to the appropriate logging module and a dummy listeners (the latter just "print" each update as a placeholder for production-ready purposes), and set the "updates listener" to the node with ID 5 to a custom listener that simply prints "custom lister for ID 5" before logging the updates
+- the Python code should manage everything inside a custom class, both for further reusability (in many more usages of the "fcpp_bridge" framework) and to allow "start" and "stop" of the simulation
+- it should allow to add more "updates listeners" dynamically (hint: use the "proxy" mentioned above)
+- it should allow to modify the compilation subprocess, if possible; for example: by defining some flags like "-wall" or the optimization level
+- it should allow to set the path of both the generated C++ source files and the compiled files (if it's not possible, then refactor the involved sections beforehand) 
+- describe how the compiled C++ sources are invoked,
+- describe how the network execution could be suspended, resumed or stopped entirely
+- describe how the updates are delivered and consumed
+- describe how the nodes can be added, removed and "monitored for disconnection"
+- describe all other details
+
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+
+

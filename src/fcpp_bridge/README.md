@@ -121,6 +121,30 @@ fcpp_bridge/
 └── build/                  ← Compiled binaries (git-ignored)
 ```
 
+## Examples
+
+The `examples/` directory contains Python ports of real FCPP C++ algorithms from
+`fcpp-sample-project` and `fcpp-exercises`, written for demonstration and learning.
+Each file defines an `@aggregate_function` class (transpilable to C++) and a pure-Python
+`_demo_simulate()` that runs the algorithm and writes per-node log files to `examples/logs/`.
+
+Run any example:
+```bash
+cd <repo-root>
+PYTHONPATH=src python src/fcpp_bridge/examples/<example>.py
+```
+
+| Python file | C++ source | Key FCPP primitives |
+|---|---|---|
+| `spreading_collection.py` | `fcpp-sample-project/lib/spreading_collection.hpp` | `rectangle_walk`, `abf_distance`, `mp_collection`, `broadcast` |
+| `channel_broadcast.py` | `fcpp-sample-project/lib/channel_broadcast.hpp` | `rectangle_walk`, `bis_distance`, `broadcast` |
+| `collection_compare.py` | `fcpp-sample-project/lib/collection_compare.hpp` | `rectangle_walk`, `abf_distance`, `sp_collection`, `mp_collection`, `wmp_collection`, `count_hood` |
+| `message_dispatch.py` | `fcpp-sample-project/lib/message_dispatch.hpp` | `rectangle_walk`, `bis_distance`, `nbr`, `min_hood`, `sp_collection`, `spawn`, `old` |
+| `chain_decaying.py` | `fcpp-sample-project/run/chain_decaying.hpp` | `nbr`, `min_hood` |
+
+See [EXAMPLES_JOURNAL.md](EXAMPLES_JOURNAL.md) for the full algorithm notes, source inventory,
+and resume instructions.
+
 ## Documentation
 
 - **[bridge.md](../bridge.md)** — Complete architecture & implementation log
