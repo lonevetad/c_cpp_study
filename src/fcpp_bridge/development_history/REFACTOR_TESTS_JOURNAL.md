@@ -5,8 +5,8 @@ Each monolithic `test_<phase>.py` becomes a sub-package with one file per compon
 
 **Run tests**: `PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -v`  
 **Baseline**: 482 tests (at time of this refactor).
-**Current total**: 523 tests — 523 pass, 0 fail
-(+38 network listener pipeline v1.0, +3 compiler customization v1.1).
+**Current total**: 578 tests — 578 pass, 0 fail
+(+38 v1.0, +3 v1.1, +32 PhysicalNode v1.2, +8 DeviceManager v1.2, +23 liveness strategies v1.3).
 
 ---
 

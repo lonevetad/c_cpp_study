@@ -1,7 +1,7 @@
 # FCPP Python-to-C++ Bridge — Comprehensive Design Document
 
-**Status**: All 7 Phases Implemented (v1.1)  
-**Last Updated**: 2026-05-24  
+**Status**: All 7 Phases Implemented (v1.3)  
+**Last Updated**: 2026-05-25  
 **Project**: `fcpp_bridge/` (implemented)
 
 ---
@@ -628,14 +628,32 @@ src/fcpp_bridge/
     - `Compiler.__init__` gains `std: str = "c++26"`, `opt_level: str = "2"`, `extra_includes: Optional[List[str]] = None`
     - `TUTORIAL_simple.md`: beginner guide — 20-node hop-channel (BIS distance + hop count + broadcast); DSL → transpile → compile → run → listener pipeline; pure-Python fallback
     - `TUTORIAL_in_depth.md`: production guide — `HopChannelSimulation` class; `ListenerProxy` global + per-node node-5 override; dynamic listener management; full lifecycle; node add/remove/heartbeat; complete feature reference table
+15. [x] Physical device deployment (v1.2) — +32 PhysicalNode tests, +8 DeviceManager tests
+    - `ipc/_ipc_node_base.py`: `_IpcNodeBase` — shared listener pipeline + passive heartbeat + `get_state()`; both `SwarmProcess` and `PhysicalNode` inherit from it; eliminates code duplication
+    - `ipc/physical_node.py`: `PhysicalNode(host, port, backend_type, reconnect_interval)` — connects to an already-running physical device (no subprocess); `connect()`, `close()` (device keeps running), `is_connected` property
+    - Auto-reconnect: `start_auto_reconnect(interval)` / `stop_auto_reconnect()` — background thread that retries `connect()` while `is_connected is False`
+    - FCPP-level neighbor join/leave: `on_neighbor_joined(cb)` fires when new `node_id` first appears in a snapshot; `on_neighbor_left(cb)` fires via heartbeat when a node exceeds the liveness timeout; `_seen_node_ids` set tracks all observed neighbors
+    - `DeviceManager` extended: `add_simulation(name, binary_path, ...)` → `SwarmProcess`; `add_physical(name, host, port, backend_type)` → `PhysicalNode`; `add()` remains backward-compatible alias; `start_all()` / `connect_all()` separate; `step_all()` skips `PhysicalNode`; `total_nodes()` uses new `node_count` property
+    - `_IpcNodeBase.node_count`: `SwarmProcess` returns `num_nodes`; `PhysicalNode` returns `len(_seen_node_ids) or 1`
+    - Progress tracked in `PHYSICAL_DEPLOYMENT_JOURNAL.md`
+16. [x] Pluggable liveness strategies (v1.3) — +23 new tests
+    - `ipc/liveness_strategy.py`: `LivenessStrategy` ABC — `on_snapshot(snapshot)`, `check(**kwargs) → Dict[int, bool]`, `discard(node_id)`, `close()`.  Unknown kwargs silently ignored for forward compat.
+    - `PassiveHeartbeatStrategy(timeout=30.0)`: alive if snapshot received within timeout; per-call override via `check(timeout=...)`.  Default strategy.
+    - `ActivePingStrategy(backend_getter, ping_timeout=2.0)`: sends `{"cmd": "ping", "node_id": n}` via IPC backend, expects `{"status": "pong"}`; `backend_getter` is a lambda so reconnects are transparent.  Requires C++ ping handler.
+    - `AlwaysAliveStrategy()`: always returns True for every tracked node; for testing / disabling checks.
+    - `_IpcNodeBase` updated: `liveness_strategy=` constructor kwarg; `set_liveness_strategy(strat)` closes old + installs new; `_heartbeat_timestamps` backward-compat property returns `strat._timestamps` for passive strategy; `check_liveness(timeout=30.0, **kwargs)` delegates to strategy; `_discard_node_from_liveness(node_id)` calls `strategy.discard()`.
+    - `SwarmProcess.remove_node` now calls `_discard_node_from_liveness` instead of direct dict access.
+    - `SwarmProcess`, `PhysicalNode`, `DeviceManager.add_simulation`, `DeviceManager.add_physical` all accept `liveness_strategy=`.
+    - Progress tracked in `PHYSICAL_DEPLOYMENT_JOURNAL.md` (same scope as v1.2)
 
-**Total: 523 tests — 523 pass, 0 fail.**
+**Total: 578 tests — 578 pass, 0 fail.**
 
 ### Remaining / Future Work
 
 - Multi-swarm coordination UI (DeviceManager backend done; frontend TBD)
 - Activate ANTLR4 path: run `grammar/generate_antlr.py --download` (requires Java 11+)
-- Active heartbeat (ping/pong) for physical device deployments (requires C++ runtime support)
+- `ActivePingStrategy` requires C++ binary to implement `{"cmd": "ping"}` handler
+- `DeviceManager.accept_registrations(port)` — listen for devices self-registering when they come online (autonomous fleet discovery)
 
 ### Run Tests
 

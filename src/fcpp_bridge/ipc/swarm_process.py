@@ -1,6 +1,5 @@
 import random
 import subprocess
-import threading
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -10,17 +9,22 @@ from .unix_socket_backend import UnixSocketBackend
 from .http_backend import HttpBackend
 from .grpc_backend import GrpcBackend
 from .swarm_snapshot import SwarmSnapshot
-from .listener_proxy import ListenerProxy
 from .updates_listener import UpdatesListener
+from .liveness_strategy import LivenessStrategy
+from ._ipc_node_base import _IpcNodeBase
 
 
-class SwarmProcess:
+class SwarmProcess(_IpcNodeBase):
     """Manage a compiled swarm subprocess with IPC communication.
+
+    This class is for **simulation mode**: it spawns a local C++ binary and
+    drives the entire swarm from Python.  For deploying to physical devices
+    (robots, drones, phones, sensors) see :class:`PhysicalNode`.
 
     Node addition strategies
     ------------------------
     add_nodes_random(count, ...)      random unique IDs
-    add_node_explicit(id, pos, ...)   explicit ID + position (physical devices)
+    add_node_explicit(id, pos, ...)   explicit ID + position
     add_nodes_sequential(count, ...)  sequential IDs (unique by construction)
     add_nodes(count)                  backward-compat alias for add_nodes_sequential
 
@@ -57,27 +61,22 @@ class SwarmProcess:
         ipc_backend: str = "unix",
         ipc_port: Optional[int] = None,
         listener_mode: str = "sequential",
+        liveness_strategy: Optional[LivenessStrategy] = None,
     ):
+        super().__init__(listener_mode=listener_mode, liveness_strategy=liveness_strategy)
         self.binary_path = Path(binary_path)
         self.num_nodes = num_nodes
         self.ipc_backend_name = ipc_backend
         self.ipc_port = ipc_port or 50051
-        self._listener_mode = listener_mode
         self.process: Optional[subprocess.Popen] = None
-        self.backend: Optional[IpcBackend] = None
 
         # Node ID tracking
         self._known_node_ids: set = set()
         self._next_sequential_id: int = 0
 
-        # Heartbeat (passive): node_id → last-seen timestamp
-        self._heartbeat_timestamps: Dict[int, float] = {}
-        self._heartbeat_thread: Optional[threading.Thread] = None
-        self._heartbeat_stop_event: Optional[threading.Event] = None
-
-        # Listener pipeline
-        self._global_listener: Optional[ListenerProxy] = None
-        self._node_listeners: Dict[int, ListenerProxy] = {}
+    @property
+    def node_count(self) -> int:
+        return self.num_nodes
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -86,9 +85,6 @@ class SwarmProcess:
     def __enter__(self):
         self.start()
         return self
-
-    def __exit__(self, *args):
-        self.close()
 
     def start(self) -> None:
         """Start the swarm subprocess."""
@@ -118,7 +114,6 @@ class SwarmProcess:
         self.backend.subscribe_state_updates(self._dispatch_update)
 
     def _create_backend(self) -> None:
-        """Create IPC backend based on configuration."""
         if self.ipc_backend_name == "unix":
             self.backend = UnixSocketBackend()
         elif self.ipc_backend_name.startswith("http://"):
@@ -131,15 +126,8 @@ class SwarmProcess:
         print(f"[SwarmProcess] Connected via {self.ipc_backend_name}")
 
     def close(self) -> None:
-        """Stop swarm and cleanup."""
-        self.stop_heartbeat_monitor()
-
-        if self._global_listener is not None:
-            self._global_listener.close()
-
-        if self.backend:
-            self.backend.close()
-            self.backend = None
+        """Stop swarm subprocess and cleanup."""
+        super().close()  # stops heartbeat, closes listener proxy, closes backend
 
         if self.process:
             self.process.terminate()
@@ -160,14 +148,6 @@ class SwarmProcess:
         if not self.backend:
             raise RuntimeError("Not connected")
         self.backend.send_command({"cmd": "step"})
-
-    def get_state(self) -> SwarmSnapshot:
-        """Get current swarm state (pull path; also updates heartbeat timestamps)."""
-        if not self.backend:
-            raise RuntimeError("Not connected")
-        snapshot = self.backend.get_state()
-        self._update_heartbeats(snapshot)
-        return snapshot
 
     # ------------------------------------------------------------------
     # Node addition — three strategies
@@ -306,128 +286,7 @@ class SwarmProcess:
             raise ValueError(f"Node ID {node_id} is not tracked")
 
         self._known_node_ids.discard(node_id)
-        self._heartbeat_timestamps.pop(node_id, None)
+        self._discard_node_from_liveness(node_id)
         self._node_listeners.pop(node_id, None)
         self.backend.send_command({"cmd": "remove_node", "id": node_id})
         self.num_nodes = max(0, self.num_nodes - 1)
-
-    # ------------------------------------------------------------------
-    # Liveness / heartbeat
-    # ------------------------------------------------------------------
-
-    def _update_heartbeats(self, snapshot: SwarmSnapshot) -> None:
-        """Record the current time as the last-seen timestamp for each node."""
-        now = time.time()
-        for node in snapshot.nodes:
-            self._heartbeat_timestamps[node.node_id] = now
-
-    def check_liveness(self, timeout: float = 30.0) -> Dict[int, bool]:
-        """Return {node_id: True} for each tracked node seen within *timeout* seconds."""
-        now = time.time()
-        return {
-            nid: (now - ts) <= timeout
-            for nid, ts in self._heartbeat_timestamps.items()
-        }
-
-    def start_heartbeat_monitor(
-        self,
-        interval: float = 5.0,
-        timeout: float = 30.0,
-        on_dead: Optional[Callable[[int], None]] = None,
-    ) -> None:
-        """Start a background thread that calls check_liveness periodically.
-
-        on_dead(node_id) is called once per dead node per check cycle.
-        Idempotent: calling again while a monitor is running has no effect.
-        """
-        if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
-            return
-        self._heartbeat_stop_event = threading.Event()
-        self._heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop,
-            args=(interval, timeout, on_dead),
-            daemon=True,
-            name="SwarmProcess-heartbeat",
-        )
-        self._heartbeat_thread.start()
-
-    def stop_heartbeat_monitor(self) -> None:
-        """Stop the heartbeat background thread (waits up to 2 s)."""
-        if self._heartbeat_stop_event is not None:
-            self._heartbeat_stop_event.set()
-        if self._heartbeat_thread is not None:
-            self._heartbeat_thread.join(timeout=2.0)
-            self._heartbeat_thread = None
-            self._heartbeat_stop_event = None
-
-    def _heartbeat_loop(
-        self,
-        interval: float,
-        timeout: float,
-        on_dead: Optional[Callable[[int], None]],
-    ) -> None:
-        assert self._heartbeat_stop_event is not None
-        while not self._heartbeat_stop_event.is_set():
-            liveness = self.check_liveness(timeout)
-            if on_dead is not None:
-                for nid, alive in liveness.items():
-                    if not alive:
-                        on_dead(nid)
-            self._heartbeat_stop_event.wait(interval)
-
-    # ------------------------------------------------------------------
-    # Updates listener pipeline
-    # ------------------------------------------------------------------
-
-    def add_listener(self, listener: UpdatesListener) -> int:
-        """Register a global updates listener.
-
-        If this is the first listener, a ListenerProxy is created using the
-        mode passed to __init__ (default "sequential").
-        Returns the listener ID for later removal.
-        """
-        if self._global_listener is None:
-            self._global_listener = ListenerProxy(mode=self._listener_mode)
-        return self._global_listener.add_listener(listener)
-
-    def remove_listener(self, listener_id: int) -> None:
-        """Remove a global listener by ID."""
-        if self._global_listener is None:
-            raise RuntimeError("No listeners registered")
-        self._global_listener.remove_listener(listener_id)
-
-    def add_node_listener(self, node_id: int, listener: UpdatesListener) -> int:
-        """Register a per-node listener that overrides the global listener.
-
-        Returns the listener ID for later removal via remove_node_listener.
-        """
-        if node_id not in self._node_listeners:
-            self._node_listeners[node_id] = ListenerProxy(mode=self._listener_mode)
-        return self._node_listeners[node_id].add_listener(listener)
-
-    def remove_node_listener(self, node_id: int, listener_id: int) -> None:
-        """Remove a per-node listener by node ID and listener ID."""
-        proxy = self._node_listeners.get(node_id)
-        if proxy is None:
-            raise RuntimeError(f"No per-node listeners for node {node_id}")
-        proxy.remove_listener(listener_id)
-
-    # ------------------------------------------------------------------
-    # Internal dispatch
-    # ------------------------------------------------------------------
-
-    def _dispatch_update(self, snapshot: SwarmSnapshot) -> None:
-        """Route an incoming snapshot to the appropriate listener(s).
-
-        Called by the IPC backend's push subscription and also wired to
-        the pull path via get_state().
-        Updates heartbeat timestamps as a side effect.
-        """
-        self._update_heartbeats(snapshot)
-
-        for node in snapshot.nodes:
-            nid = node.node_id
-            if nid in self._node_listeners:
-                self._node_listeners[nid](snapshot)
-            elif self._global_listener is not None:
-                self._global_listener(snapshot)

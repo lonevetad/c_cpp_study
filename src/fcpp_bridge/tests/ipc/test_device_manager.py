@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from fcpp_bridge.ipc import DeviceManager, SwarmProcess, SwarmSnapshot
+from fcpp_bridge.ipc import DeviceManager, SwarmProcess, PhysicalNode, SwarmSnapshot
 
 
 def _dummy_binary(tmp_path):
@@ -142,3 +142,77 @@ def test_device_manager_ipc_backend_stored(tmp_path):
     proc = mgr.add("s1", _dummy_binary(tmp_path), ipc_backend="grpc", ipc_port=9999)
     assert proc.ipc_backend_name == "grpc"
     assert proc.ipc_port == 9999
+
+
+# ============================================================================
+# Physical device support (v1.2)
+# ============================================================================
+
+
+def test_device_manager_add_physical_returns_physical_node():
+    mgr = DeviceManager()
+    node = mgr.add_physical("robot1", "192.168.1.100", 8080)
+    assert isinstance(node, PhysicalNode)
+    assert "robot1" in mgr.device_names
+
+
+def test_device_manager_add_physical_stores_host_port():
+    mgr = DeviceManager()
+    node = mgr.add_physical("drone1", "10.0.0.5", 50051, backend_type="grpc")
+    assert node.host == "10.0.0.5"
+    assert node.port == 50051
+    assert node.backend_type == "grpc"
+
+
+def test_device_manager_add_physical_duplicate_raises():
+    mgr = DeviceManager()
+    mgr.add_physical("r1", "192.168.1.1", 8080)
+    with pytest.raises(ValueError, match="r1"):
+        mgr.add_physical("r1", "192.168.1.2", 8080)
+
+
+def test_device_manager_add_simulation_returns_swarm_process(tmp_path):
+    mgr = DeviceManager()
+    proc = mgr.add_simulation("sim1", _dummy_binary(tmp_path), num_nodes=50)
+    assert isinstance(proc, SwarmProcess)
+    assert "sim1" in mgr.device_names
+    assert proc.num_nodes == 50
+
+
+def test_device_manager_get_returns_physical_node():
+    mgr = DeviceManager()
+    node = mgr.add_physical("r1", "192.168.1.1", 8080)
+    assert mgr.get("r1") is node
+
+
+def test_device_manager_step_all_skips_physical_nodes(tmp_path):
+    mgr = DeviceManager()
+
+    # Add a SwarmProcess with a mock backend
+    sim = mgr.add_simulation("sim", _dummy_binary(tmp_path))
+    sim.backend = MagicMock()
+
+    # Add a PhysicalNode — step_all must NOT call step() on it
+    node = mgr.add_physical("robot", "localhost", 9000)
+    node_step = MagicMock()
+    node.step = node_step  # inject a fake step; should never be called
+
+    mgr.step_all()
+
+    sim.backend.send_command.assert_called_once()  # sim was stepped
+    node_step.assert_not_called()                   # physical node was skipped
+
+
+def test_device_manager_total_nodes_mixed(tmp_path):
+    mgr = DeviceManager()
+    mgr.add_simulation("sim", _dummy_binary(tmp_path), num_nodes=100)
+    # A fresh PhysicalNode with no snapshots has node_count == 1
+    mgr.add_physical("robot", "localhost", 9000)
+    assert mgr.total_nodes() == 101
+
+
+def test_device_manager_device_count_includes_both_types(tmp_path):
+    mgr = DeviceManager()
+    mgr.add_simulation("sim", _dummy_binary(tmp_path))
+    mgr.add_physical("r1", "192.168.1.1", 8080)
+    assert mgr.device_count == 2

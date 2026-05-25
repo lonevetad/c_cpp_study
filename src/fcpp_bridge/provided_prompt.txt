@@ -155,3 +155,16 @@ The "TUTORIAL_in_depth" is similar to the "simple" one, but with additional feat
 Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
 
 
+
+
+
+
+About the 'passive heartbeat': refactor that part such that the 'check for node disconnection' is abstracted away and it can be dynamically configured (both via constructor and a setter method) to be implemented using any implementation: passive heartbeat, active ping/pong, or other modern solutions.
+(One key aspect, among the many, of the whole 'fcpp_bridge' is to be flexible and configurable.)
+Update the existing '.md' files, then save your memory."
+
+
+
+
+Read the "*.md" files inside the "fcpp_bridge" folder (expect for "TUTORIAL_*.md" and "README.md") and compact them in a new "DEPLOYMENT.md" file (and move the original files in a new "development_history" folder afterwards), by compacting them chronologically describing the whole deployment, grouping the changes by topics and Phases. Then, save your memory.
+
