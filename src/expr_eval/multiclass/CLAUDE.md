@@ -3,7 +3,7 @@
 ## What this project is
 
 C++26 refactor of `../mono_file/expr_eval.cpp` (855 lines, single file) into a
-multi-file, multi-class project.  The original file **must never be modified**.
+multi-file, multi-class project. The original file **must never be modified**.
 
 Full design rationale: `refactory_summary.md` (same directory).
 
@@ -12,12 +12,14 @@ Full design rationale: `refactory_summary.md` (same directory).
 ## Environment
 
 ### Windows 11 (MSYS2 UCRT64)
+
 - Compiler: GCC 15.2.0 (MSYS2 UCRT64)
 - Standard: C++26
 - Make: `mingw32-make` (`make` is not on PATH in MSYS2 — always use `mingw32-make`)
 - Shell: MSYS2 bash (Unix paths, forward slashes)
 
 ### Linux (Mint / Ubuntu)
+
 - Compiler: GCC **≥ 15** required for `-std=c++26`; on Ubuntu 24.04 install via `sudo add-apt-repository ppa:ubuntu-toolchain-r/test && sudo apt install g++-15`
 - Make: `make`
 - Shell: bash
@@ -81,7 +83,7 @@ include/expr_eval/
 src/           mirrors include/ structure; .cpp files for non-template classes
 test/
   test_expr_eval.cpp    75 self-contained unit tests; no external framework
-main.cpp                demo: 7 expressions, variables v0–v5, expects "Good job!"
+main.cpp                demo: 7 expressions, variables v0-v5, expects "Good job!"
 Makefile
 refactory_summary.md
 ```
@@ -91,18 +93,21 @@ refactory_summary.md
 ## Critical design patterns
 
 ### optimize() — ownership-transfer
+
 ```cpp
 virtual unique_ptr<AstNode> optimize(unique_ptr<AstNode> self);
 ```
-`self` is the caller's owning pointer to `this`.  Method returns either `self`
-(no change) or a descendant (node removes itself).  When it returns a descendant,
+
+`self` is the caller's owning pointer to `this`. Method returns either `self`
+(no change) or a descendant (node removes itself). When it returns a descendant,
 `self` drops at function exit → `this` is destroyed cleanly.
 
 **Safe call site only:** `optimizeNode(unique_ptr<AstNode>)` (declared in AstNode.hpp,
-defined in AstNode.cpp).  Never call `node->optimize(node)` directly — move semantics
+defined in AstNode.cpp). Never call `node->optimize(node)` directly — move semantics
 invalidate `node` before the call.
 
 ### CRTP node families
+
 - `LogicalBinaryNode<Derived>` — AND/OR share all logic; derived supplies two constants.
 - `EqualityNode<Derived>` — EQ/NEQ; dispatches `compareBool`/`compareNumber` to derived.
 - `OrderComparisonNode<Derived>` — LT/GT/LTE/GTE; enforces NUMBER operands; dispatches `compare`.
@@ -111,7 +116,8 @@ CRTP bodies live entirely in headers (no `.cpp`). `AndNode`/`OrNode` and all fou
 order-comparison nodes are header-only.
 
 ### adjustDepthRecursive(int delta)
-Called on the subtree that is about to become a *deeper* child (delta = +1 per level
+
+Called on the subtree that is about to become a _deeper_ child (delta = +1 per level
 gained) or shallower (delta = -1/-2 during optimization). Must be called **before**
 the node is moved into its new parent.
 
@@ -119,19 +125,20 @@ the node is moved into its new parent.
 
 ## Non-obvious invariants / past bugs fixed
 
-| Issue | Resolution |
-|---|---|
-| Ternary `?:` between `unique_ptr<GteNode>` and `unique_ptr<GtNode>` — GCC can't deduce common type | Replaced with explicit `if/else if` branches in `parseNumericComparison` |
-| `parseEqual` had a spurious `current()=='<' \|\| current()=='>'` early-return guard | Removed; `<`/`>` are fully consumed by `parseNumericComparison` before `parseEqual` runs |
-| `m["v2"] = "-10"` in original `main` made `v2 > 3` false → e5/e6 fail | Changed to `"5"`; original `main` never evaluated (always returned `true`) so the bug was hidden |
-| All comparison operators marked `// TODO` in original `evaluateTree` | Fully implemented in the refactor |
-| `ALLOW_ETHEROGENEOUS_COMPARISONS` typo in original macro | Fixed to `kAllowHeterogeneousComparisons` in `config.hpp` |
+| Issue                                                                                              | Resolution                                                                                       |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Ternary `?:` between `unique_ptr<GteNode>` and `unique_ptr<GtNode>` — GCC can't deduce common type | Replaced with explicit `if/else if` branches in `parseNumericComparison`                         |
+| `parseEqual` had a spurious `current()=='<' \|\| current()=='>'` early-return guard                | Removed; `<`/`>` are fully consumed by `parseNumericComparison` before `parseEqual` runs         |
+| `m["v2"] = "-10"` in original `main` made `v2 > 3` false → e5/e6 fail                              | Changed to `"5"`; original `main` never evaluated (always returned `true`) so the bug was hidden |
+| All comparison operators marked `// TODO` in original `evaluateTree`                               | Fully implemented in the refactor                                                                |
+| `ALLOW_ETHEROGENEOUS_COMPARISONS` typo in original macro                                           | Fixed to `kAllowHeterogeneousComparisons` in `config.hpp`                                        |
 
 ---
 
 ## Test suite quick reference
 
-`test/test_expr_eval.cpp` — no Catch2/gtest.  Key helpers:
+`test/test_expr_eval.cpp` — no Catch2/gtest. Key helpers:
+
 - `eval(expr, vars)` — calls `ExprEval::evaluate()` with `cout` suppressed (redirected
   to `ostringstream sink`); re-throws all exceptions.
 - `EXPECT_THROW(ExcType, expr, label)` — catches only `ExcType`; fails if none thrown.
@@ -139,7 +146,7 @@ the node is moved into its new parent.
 Sections (75 tests total):
 `Literals` · `Terminal variable lookup` · `Equality` · `Numeric comparisons` ·
 `Logical AND` (incl. short-circuit) · `Logical OR` (incl. short-circuit) ·
-`NOT / double-NOT` · `NEGATE / double-NEGATE` · `Parentheses` · `Complex (e1–e7)` ·
+`NOT / double-NOT` · `NEGATE / double-NEGATE` · `Parentheses` · `Complex (e1-e7)` ·
 `ParseError` · `EvaluationError`
 
 Expected result: **75 passed, 0 failed**.
@@ -151,6 +158,7 @@ Expected result: **75 passed, 0 failed**.
 ```
 OR < AND < equality (==,!=) < comparison (<,<=,>,>=) < NOT(!) < NEGATE(-) < atom
 ```
+
 OR and AND are **right-associative** (recursive call goes to the right operand).
 Equality chains are also right-associative.
 

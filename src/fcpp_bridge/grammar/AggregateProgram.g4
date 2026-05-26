@@ -1,6 +1,6 @@
-// FCPP Aggregate Program Grammar — Phase 5
+// FCPP Aggregate Program Grammar — Phase 6
 //
-// Generate Python parser stubs:
+// Generate Python parser stubs (regenerate after any grammar change):
 //   java -jar antlr-4.13.1-complete.jar \
 //       -Dlanguage=Python3 \
 //       -o src/fcpp_bridge/grammar/__antlr_gen \
@@ -8,6 +8,11 @@
 //
 // Install ANTLR Python runtime:
 //   pip install antlr4-python3-runtime==4.13.1
+//
+// Phase 6 additions: if/elif/else, while, for-range, switch/case, assignments.
+// These mirror the Python DSL constructs that the Python-AST transpiler handles;
+// if you write aggregate functions as Python classes you don't need this grammar
+// directly — it is used only by the text-mode ANTLR parser.
 
 grammar AggregateProgram;
 
@@ -28,12 +33,63 @@ initialStateDef
     ;
 
 computeDef
-    : COMPUTE LPAREN NAME COMMA NAME RPAREN COLON expr
+    : COMPUTE LPAREN NAME COMMA NAME RPAREN COLON stmt+
     ;
+
+// ── Statements ────────────────────────────────────────────────────────────────
+
+stmt
+    : ifStmt        # IfStatement
+    | whileStmt     # WhileStatement
+    | forStmt       # ForStatement
+    | switchStmt    # SwitchStatement
+    | assignStmt    # AssignStatement
+    | returnStmt    # ReturnStatement
+    | expr SEMI?    # ExprStatement
+    ;
+
+ifStmt
+    : IF LPAREN expr RPAREN LBRACE stmt* RBRACE
+      (ELSE IF LPAREN expr RPAREN LBRACE stmt* RBRACE)*
+      (ELSE LBRACE stmt* RBRACE)?
+    ;
+
+whileStmt
+    : WHILE LPAREN expr RPAREN LBRACE stmt* RBRACE
+    ;
+
+forStmt
+    : FOR LPAREN NAME IN RANGE LPAREN argList RPAREN RPAREN LBRACE stmt* RBRACE
+    ;
+
+switchStmt
+    : SWITCH LPAREN expr RPAREN LBRACE caseClause* defaultClause? RBRACE
+    ;
+
+caseClause
+    : CASE atom COLON stmt*
+    ;
+
+defaultClause
+    : DEFAULT COLON stmt*
+    ;
+
+assignStmt
+    : NAME ASSIGN expr SEMI?
+    ;
+
+returnStmt
+    : RETURN expr SEMI?
+    ;
+
+// ── Expressions ───────────────────────────────────────────────────────────────
 
 expr
     : expr op=(PLUS | MINUS | STAR | SLASH | PERCENT) expr   # BinaryExpr
     | expr op=(EQ | NEQ | LT | GT | LTE | GTE) expr         # CompareExpr
+    | expr op=(AND | OR) expr                                # BoolExpr
+    | NOT expr                                               # NotExpr
+    | expr IF expr ELSE expr                                 # TernaryExpr
     | primitiveCall                                           # PrimCall
     | functionCall                                           # FuncCall
     | atom                                                   # AtomExpr
@@ -96,7 +152,20 @@ DEF           : 'def' ;
 INITIAL_STATE : 'initial_state' ;
 COMPUTE       : 'compute' ;
 IF            : 'if' ;
+ELSE          : 'else' ;
+WHILE         : 'while' ;
+FOR           : 'for' ;
+IN            : 'in' ;
+RANGE         : 'range' ;
+SWITCH        : 'switch' ;
+CASE          : 'case' ;
+DEFAULT       : 'default' ;
+BREAK         : 'break' ;
 RETURN        : 'return' ;
+NOT           : 'not' ;
+AND           : 'and' ;
+OR            : 'or' ;
+ASSIGN        : '=' ;
 
 // FCPP primitives — neighbourhood & temporal
 NBR           : 'nbr' ;

@@ -50,14 +50,14 @@ template. Includes both `simple_struct.h` and `simple_class.h`.
 
 #### `display()` overloads
 
-| Overload signature | Output format |
-|---|---|
-| `display(const T&)` _(template fallback)_ | `operator<<` stringification |
-| `display(int32_t)` | plain decimal, no quotes |
-| `display(const std::string&)` | `"value"` — double-quoted |
-| `display(const std::string*)` | `"value"` or `null` if pointer is null |
-| `display(const Point&)` | delegates to `Point::to_string()` |
-| `display(const Person*)` | delegates to `Person::to_string()` or `null` |
+| Overload signature                        | Output format                                |
+| ----------------------------------------- | -------------------------------------------- |
+| `display(const T&)` _(template fallback)_ | `operator<<` stringification                 |
+| `display(int32_t)`                        | plain decimal, no quotes                     |
+| `display(const std::string&)`             | `"value"` — double-quoted                    |
+| `display(const std::string*)`             | `"value"` or `null` if pointer is null       |
+| `display(const Point&)`                   | delegates to `Point::to_string()`            |
+| `display(const Person*)`                  | delegates to `Person::to_string()` or `null` |
 
 C++ overload resolution **always prefers the non-template overload** over a
 template instantiation when both are equally good matches, so the concrete
@@ -110,12 +110,12 @@ Each example function follows the same structure:
 
 ## Overall Test Summary
 
-The suite exercises `std::map` across **4 value types × 2 key types = 8 examples**,
+The suite exercises `std::map` across **4 value types \* 2 key types = 8 examples**,
 covering two orthogonal axes:
 
-| Axis | Choices |
-|---|---|
-| **Key type** | `int32_t` (numeric order) · `std::string` (lexicographic order) |
+| Axis           | Choices                                                                          |
+| -------------- | -------------------------------------------------------------------------------- |
+| **Key type**   | `int32_t` (numeric order) · `std::string` (lexicographic order)                  |
 | **Value type** | `int32_t` · `std::string*` (heap) · `Point` (struct by value) · `Person*` (heap) |
 
 The central theme is **memory ownership**. The examples are grouped into two

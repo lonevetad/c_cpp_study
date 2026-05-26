@@ -102,7 +102,7 @@ compiler = Compiler(
 ### 3.2 Per-compilation flag overrides
 
 `Compiler.compile(cpp_file, output_binary, extra_flags=[...])` appends
-`extra_flags` AFTER all base flags.  GCC applies the last occurrence, so
+`extra_flags` AFTER all base flags. GCC applies the last occurrence, so
 you can override the constructor-level optimisation for a single file:
 
 ```python
@@ -590,13 +590,14 @@ sim.stop()    ← loop exits, heartbeat thread stopped, subprocess terminated
 ```
 
 **Suspend / resume** is purely a Python-side concept: the C++ binary does not
-receive a "pause" command; it simply stops receiving `step` commands.  If the
+receive a "pause" command; it simply stops receiving `step` commands. If the
 binary has its own internal timer, use `extra_flags=["-DFCPP_NO_TIMER"]` (or an
 equivalent compile flag) to disable it and let Python control pacing entirely.
 
 **Graceful stop** sequence (`sim.stop()`):
+
 1. Set `_running = False` → round loop exits on next iteration.
-2. Join the round thread (up to 5 × round_interval seconds).
+2. Join the round thread (up to 5 \* round_interval seconds).
 3. Call `swarm.stop_heartbeat_monitor()` → join the heartbeat daemon thread.
 4. Call `swarm.close()` → send SIGTERM to the subprocess; SIGKILL after 5 s.
 
@@ -801,11 +802,31 @@ print('Success:', result.success)
 "
 ```
 
+### Running individual pipeline stages
+
+`examples/end_to_end.py` lets you run any subset of the four pipeline stages without
+re-running earlier ones. Each stage saves an artifact to disk so the next stage can
+load it directly:
+
+```bash
+# Validate + transpile only (no compiler required)
+python src/fcpp_bridge/examples/end_to_end.py --steps validate transpile
+
+# Resume from compile (reads consensus_latest.cpp written by transpile)
+python src/fcpp_bridge/examples/end_to_end.py --from compile
+
+# Jump straight to the simulation step
+python src/fcpp_bridge/examples/end_to_end.py --steps run --nodes 20 --rounds 10
+```
+
+See `TUTORIAL_simple.md §Running individual steps` for the full flag reference and
+the artifact path table.
+
 ---
 
 ## 10. Reference — `ListenerProxy` used internally
 
-`SwarmProcess.add_listener()` always stores listeners in a `ListenerProxy`.  You
+`SwarmProcess.add_listener()` always stores listeners in a `ListenerProxy`. You
 can also build one explicitly for other purposes:
 
 ```python
@@ -833,27 +854,27 @@ proxy.close()
 
 ## 11. Feature reference table
 
-| Feature | API | Notes |
-|---------|-----|-------|
-| Transpile | `Transpiler(cls).generate()` | Returns C++ string |
-| Write C++ | `Path.write_text(cpp)` | Manual; `get_or_compile` does it automatically |
-| Compile (custom) | `Compiler(std, opt_level, extra_includes, ...)` | See §3 |
-| Compile per-file flags | `compiler.compile(f, out, extra_flags=[...])` | Appended last → override |
-| Cache hit | `compiler.get_or_compile(cpp, name)` | SHA-256; skips if unchanged |
-| Spawn subprocess | `SwarmProcess(binary, num_nodes).start()` | Sends `--num-nodes=N` to binary |
-| Step | `swarm.step()` | One simulation round |
-| Pull state | `swarm.get_state()` → `SwarmSnapshot` | Also updates heartbeat timestamps |
-| Push state | `IpcBackend.subscribe_state_updates(cb)` | Wired to `_dispatch_update` in `start()` |
-| Global listener | `swarm.add_listener(fn)` → int | Auto-creates `ListenerProxy` |
-| Remove listener | `swarm.remove_listener(id)` | |
-| Per-node override | `swarm.add_node_listener(nid, fn)` → int | Fires instead of global for that node |
-| Proxy mode | `SwarmProcess(listener_mode="parallel")` | Sequential (default) or parallel |
-| Add random nodes | `swarm.add_nodes_random(n, *, area, ...)` → List[int] | |
-| Add explicit node | `swarm.add_node_explicit(id, pos, ...)` | For physical devices |
-| Add sequential | `swarm.add_nodes_sequential(n, positions)` | |
-| Remove node | `swarm.remove_node(id)` | Clears heartbeat + per-node listener |
-| Liveness check | `swarm.check_liveness(timeout)` → Dict[int,bool] | Passive heartbeat |
-| Heartbeat thread | `swarm.start_heartbeat_monitor(interval, timeout, on_dead)` | Background |
-| Stop heartbeat | `swarm.stop_heartbeat_monitor()` | |
-| Pause simulation | stop calling `step()` | Subprocess stays alive |
-| Stop entirely | `swarm.close()` | SIGTERM → SIGKILL after 5 s |
+| Feature                | API                                                         | Notes                                          |
+| ---------------------- | ----------------------------------------------------------- | ---------------------------------------------- |
+| Transpile              | `Transpiler(cls).generate()`                                | Returns C++ string                             |
+| Write C++              | `Path.write_text(cpp)`                                      | Manual; `get_or_compile` does it automatically |
+| Compile (custom)       | `Compiler(std, opt_level, extra_includes, ...)`             | See §3                                         |
+| Compile per-file flags | `compiler.compile(f, out, extra_flags=[...])`               | Appended last → override                       |
+| Cache hit              | `compiler.get_or_compile(cpp, name)`                        | SHA-256; skips if unchanged                    |
+| Spawn subprocess       | `SwarmProcess(binary, num_nodes).start()`                   | Sends `--num-nodes=N` to binary                |
+| Step                   | `swarm.step()`                                              | One simulation round                           |
+| Pull state             | `swarm.get_state()` → `SwarmSnapshot`                       | Also updates heartbeat timestamps              |
+| Push state             | `IpcBackend.subscribe_state_updates(cb)`                    | Wired to `_dispatch_update` in `start()`       |
+| Global listener        | `swarm.add_listener(fn)` → int                              | Auto-creates `ListenerProxy`                   |
+| Remove listener        | `swarm.remove_listener(id)`                                 |                                                |
+| Per-node override      | `swarm.add_node_listener(nid, fn)` → int                    | Fires instead of global for that node          |
+| Proxy mode             | `SwarmProcess(listener_mode="parallel")`                    | Sequential (default) or parallel               |
+| Add random nodes       | `swarm.add_nodes_random(n, *, area, ...)` → List[int]       |                                                |
+| Add explicit node      | `swarm.add_node_explicit(id, pos, ...)`                     | For physical devices                           |
+| Add sequential         | `swarm.add_nodes_sequential(n, positions)`                  |                                                |
+| Remove node            | `swarm.remove_node(id)`                                     | Clears heartbeat + per-node listener           |
+| Liveness check         | `swarm.check_liveness(timeout)` → Dict[int,bool]            | Passive heartbeat                              |
+| Heartbeat thread       | `swarm.start_heartbeat_monitor(interval, timeout, on_dead)` | Background                                     |
+| Stop heartbeat         | `swarm.stop_heartbeat_monitor()`                            |                                                |
+| Pause simulation       | stop calling `step()`                                       | Subprocess stays alive                         |
+| Stop entirely          | `swarm.close()`                                             | SIGTERM → SIGKILL after 5 s                    |

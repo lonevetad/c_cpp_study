@@ -77,7 +77,7 @@ class Transpiler:
         state_type_name = self.state_type.name if self.state_type else "double"
         method = getattr(self.aggregate_class, "compute")
 
-        return_expr_cpp, used_prims = self._transpile_method_return(method, {
+        cpp_body, used_prims = self._transpile_method_body(method, {
             "self_state": "self_state",
             "state": "self_state",
             "s": "self_state",
@@ -91,32 +91,41 @@ class Transpiler:
             f"{state_type_name} compute_next_state(\n"
             f"    const {state_type_name}& self_state,\n"
             f"    const std::vector<{state_type_name}>& neighbor_states) {{\n"
-            f"    return {return_expr_cpp};\n"
+            f"{cpp_body}\n"
             f"}}\n"
         )
         return code, used_prims
 
-    def _transpile_method_return(self, method, param_remap: dict):
-        """Extract the return expression from a Python method and transpile it."""
+    def _transpile_method_body(self, method, param_remap: dict):
+        """Transpile the full body of a Python method to C++ statements."""
         try:
             source = inspect.getsource(method)
             source = _tw.dedent(source)
             tree = ast.parse(source)
             func_def = tree.body[0]
         except (OSError, SyntaxError, IndexError):
-            return "self_state", []
+            return "    return self_state;", []
 
-        for node in ast.walk(func_def):
-            if isinstance(node, ast.Return) and node.value is not None:
-                visitor = PythonAstVisitor()
-                expr_cpp = visitor.visit(node.value)
-                for py_name, cpp_name in param_remap.items():
-                    expr_cpp = re.sub(
-                        rf'\b{re.escape(py_name)}\b', cpp_name, expr_cpp
-                    )
-                return expr_cpp, visitor.used_primitives
+        stmts = func_def.body
+        # skip leading docstring
+        if (
+            stmts
+            and isinstance(stmts[0], ast.Expr)
+            and isinstance(stmts[0].value, ast.Constant)
+            and isinstance(stmts[0].value.value, str)
+        ):
+            stmts = stmts[1:]
 
-        return "self_state", []
+        visitor = PythonAstVisitor()
+        cpp_body = visitor.transpile_statements(stmts)
+
+        for py_name, cpp_name in param_remap.items():
+            cpp_body = re.sub(rf'\b{re.escape(py_name)}\b', cpp_name, cpp_body)
+
+        if not cpp_body.strip():
+            cpp_body = "    return self_state;"
+
+        return cpp_body, visitor.used_primitives
 
     def _generate_main_aggregate(self, initial_expr: str) -> str:
         """Generate the main FCPP aggregate function."""

@@ -4,10 +4,10 @@
 
 Phase 7 adds two capabilities to fcpp_bridge:
 
-| Item | What | Where |
-|---|---|---|
-| ANTLR generation | Script to compile `AggregateProgram.g4` → Python3 parser stubs | `grammar/generate_antlr.py` |
-| Visualization plugin | Live / replay GUI for swarm output data | `visualization/__init__.py` |
+| Item                 | What                                                           | Where                       |
+| -------------------- | -------------------------------------------------------------- | --------------------------- |
+| ANTLR generation     | Script to compile `AggregateProgram.g4` → Python3 parser stubs | `grammar/generate_antlr.py` |
+| Visualization plugin | Live / replay GUI for swarm output data                        | `visualization/__init__.py` |
 
 ---
 
@@ -18,20 +18,20 @@ Phase 7 adds two capabilities to fcpp_bridge:
 `grammar/AggregateProgram.g4` describes the full FCPP aggregate DSL grammar.  
 `fcpp_bridge.grammar.AntlrParser` already has dual-path dispatch:
 
-| State | Parser used |
-|---|---|
+| State                                                 | Parser used                                               |
+| ----------------------------------------------------- | --------------------------------------------------------- |
 | `__antlr_gen/` missing **or** `antlr4` runtime absent | Hand-written `AggregateLanguageParser` (Phase 5 fallback) |
-| Both present | ANTLR4-backed `AggregateProgramParser` (correct path) |
+| Both present                                          | ANTLR4-backed `AggregateProgramParser` (correct path)     |
 
 Generating the stubs and installing the runtime activates the ANTLR path automatically, with full error recovery and line:column diagnostics.
 
 ### Prerequisites
 
-| Tool | Version | How to get |
-|---|---|---|
-| Java | 11+ | `sudo apt install default-jdk` / `brew install openjdk` |
-| `antlr4-python3-runtime` | 4.13.1 | `pip install antlr4-python3-runtime==4.13.1` |
-| `antlr-4.13.1-complete.jar` | 4.13.1 | `python3 generate_antlr.py --download` |
+| Tool                        | Version | How to get                                              |
+| --------------------------- | ------- | ------------------------------------------------------- |
+| Java                        | 11+     | `sudo apt install default-jdk` / `brew install openjdk` |
+| `antlr4-python3-runtime`    | 4.13.1  | `pip install antlr4-python3-runtime==4.13.1`            |
+| `antlr-4.13.1-complete.jar` | 4.13.1  | `python3 generate_antlr.py --download`                  |
 
 ### Generating the stubs
 
@@ -122,14 +122,14 @@ The visualization plugin is a **passive consumer** — it reads data from the sa
 
 #### `VisualizerBase` (ABC)
 
-| Method | Description |
-|---|---|
-| `update(snapshot)` | Process one snapshot (abstract) |
-| `start()` | Open the display |
-| `stop()` | Close and clean up |
-| `attach(collector)` | Register `self.update` with `MetricsCollector.on_update()` |
-| `detach(collector)` | Unregister the callback |
-| `replay_from_history(collector)` | Feed all recorded snapshots through `update()` |
+| Method                           | Description                                                |
+| -------------------------------- | ---------------------------------------------------------- |
+| `update(snapshot)`               | Process one snapshot (abstract)                            |
+| `start()`                        | Open the display                                           |
+| `stop()`                         | Close and clean up                                         |
+| `attach(collector)`              | Register `self.update` with `MetricsCollector.on_update()` |
+| `detach(collector)`              | Unregister the callback                                    |
+| `replay_from_history(collector)` | Feed all recorded snapshots through `update()`             |
 
 #### `TextDashboard`
 
@@ -149,6 +149,7 @@ dash.replay_from_history(collector)
 ```
 
 Sample output:
+
 ```
 === FCPP Swarm Monitor (text) ===
 round=     0  nodes=   100  mean=    1.5000  min=    0.0000  max=    3.0000
@@ -161,8 +162,9 @@ round=     1  nodes=   100  mean=    1.8500  min=    0.0000  max=    4.2000
 Live matplotlib visualization (requires `pip install matplotlib`).
 
 Two subplots update as data arrives:
-- **Swarm size** — node count per round  
-- **Node state statistics** — mean line with min–max shaded band
+
+- **Swarm size** — node count per round
+- **Node state statistics** — mean line with min-max shaded band
 
 ```python
 from fcpp_bridge.visualization import SwarmVisualizer
@@ -201,14 +203,14 @@ viz = create_visualizer(collector=collector, prefer_gui=True)
 viz.start()
 ```
 
-| Parameter | Default | Description |
-|---|---|---|
-| `collector` | `None` | If given, calls `viz.attach(collector)` automatically |
-| `prefer_gui` | `True` | Try matplotlib first |
-| `title` | `"FCPP Swarm Monitor"` | Window title (SwarmVisualizer) |
-| `max_rounds` | `500` | Rolling window size (SwarmVisualizer) |
-| `update_interval_ms` | `100` | Animation refresh rate ms (SwarmVisualizer) |
-| `stream` | `stdout` | Output stream (TextDashboard) |
+| Parameter            | Default                | Description                                           |
+| -------------------- | ---------------------- | ----------------------------------------------------- |
+| `collector`          | `None`                 | If given, calls `viz.attach(collector)` automatically |
+| `prefer_gui`         | `True`                 | Try matplotlib first                                  |
+| `title`              | `"FCPP Swarm Monitor"` | Window title (SwarmVisualizer)                        |
+| `max_rounds`         | `500`                  | Rolling window size (SwarmVisualizer)                 |
+| `update_interval_ms` | `100`                  | Animation refresh rate ms (SwarmVisualizer)           |
+| `stream`             | `stdout`               | Output stream (TextDashboard)                         |
 
 ### Minimal end-to-end example
 
@@ -243,16 +245,17 @@ pip install matplotlib      # optional; enables SwarmVisualizer
 
 Tests are in `tests/test_visualization.py` (16 tests, no matplotlib required for most).
 
-| Test group | What is covered |
-|---|---|
-| Abstract base | `VisualizerBase` cannot be instantiated |
-| attach / detach | Collector callbacks are registered and removed correctly |
-| `TextDashboard` | start/stop output, numeric/non-numeric formatting, round count, replay |
-| `SwarmVisualizer` data | Accumulation, max_rounds trimming, empty snapshot, non-numeric state |
-| Dirty flag | Set on update, cleared by `_animate` |
-| `create_visualizer` | Text fallback, matplotlib fallback, collector attachment |
+| Test group             | What is covered                                                        |
+| ---------------------- | ---------------------------------------------------------------------- |
+| Abstract base          | `VisualizerBase` cannot be instantiated                                |
+| attach / detach        | Collector callbacks are registered and removed correctly               |
+| `TextDashboard`        | start/stop output, numeric/non-numeric formatting, round count, replay |
+| `SwarmVisualizer` data | Accumulation, max_rounds trimming, empty snapshot, non-numeric state   |
+| Dirty flag             | Set on update, cleared by `_animate`                                   |
+| `create_visualizer`    | Text fallback, matplotlib fallback, collector attachment               |
 
 Run:
+
 ```bash
 PYTHONPATH=src pytest src/fcpp_bridge/tests/test_visualization.py -v
 ```
@@ -261,13 +264,13 @@ PYTHONPATH=src pytest src/fcpp_bridge/tests/test_visualization.py -v
 
 ## Files added / changed in Phase 7
 
-| File | Change |
-|---|---|
-| `visualization/__init__.py` | New — full visualization plugin |
-| `tests/test_visualization.py` | New — 16 tests |
-| `grammar/generate_antlr.py` | New — ANTLR stub generation script |
-| `grammar/requirements_antlr.txt` | New — `antlr4-python3-runtime==4.13.1` |
-| `.gitignore` | Added `grammar/__antlr_gen/` |
-| `README.md` | Added Phase 7, updated test count to 395 |
-| `bridge.md` | Added Phase 7 section |
-| `VISUALIZATION.md` | This file |
+| File                             | Change                                   |
+| -------------------------------- | ---------------------------------------- |
+| `visualization/__init__.py`      | New — full visualization plugin          |
+| `tests/test_visualization.py`    | New — 16 tests                           |
+| `grammar/generate_antlr.py`      | New — ANTLR stub generation script       |
+| `grammar/requirements_antlr.txt` | New — `antlr4-python3-runtime==4.13.1`   |
+| `.gitignore`                     | Added `grammar/__antlr_gen/`             |
+| `README.md`                      | Added Phase 7, updated test count to 395 |
+| `bridge.md`                      | Added Phase 7 section                    |
+| `VISUALIZATION.md`               | This file                                |

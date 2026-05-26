@@ -168,3 +168,11 @@ Update the existing '.md' files, then save your memory."
 
 Read the "*.md" files inside the "fcpp_bridge" folder (expect for "TUTORIAL_*.md" and "README.md") and compact them in a new "DEPLOYMENT.md" file (and move the original files in a new "development_history" folder afterwards), by compacting them chronologically describing the whole deployment, grouping the changes by topics and Phases. Then, save your memory.
 
+
+
+
+
+Write a ".md" file explaining in detail how to use the Python DSL to write the aggregate functions; dedicate a paragraph for C++-alike grammar. If there's no way to specify C++ grammar, like IF, WHILE and SWITCH statements, then do a refactor beforehand to include them.
+Then, update your memory
+
+

@@ -11,7 +11,7 @@ class SwarmVisualizer(VisualizerBase):
 
     Creates a figure with two subplots:
       - Top:    node count per round
-      - Bottom: mean value per round with min–max shaded band
+      - Bottom: mean value per round with min-max shaded band
 
     Requires matplotlib.  Raises ``ImportError`` on construction when absent.
     """
@@ -139,7 +139,8 @@ class SwarmVisualizer(VisualizerBase):
         self._ax_nodes.set_title("Swarm size")
         self._ax_nodes.grid(True, alpha=0.3)
         if self._rounds:
-            self._ax_nodes.plot(self._rounds, self._node_counts, color="steelblue", linewidth=1.5)
+            self._ax_nodes.plot(self._rounds, self._node_counts,
+                                color="steelblue", linewidth=1.5)
 
         self._ax_values.cla()
         self._ax_values.set_xlabel("Round")
@@ -152,6 +153,6 @@ class SwarmVisualizer(VisualizerBase):
             )
             self._ax_values.fill_between(
                 self._rounds, self._mins, self._maxs,
-                alpha=0.2, color="darkorange", label="min–max",
+                alpha=0.2, color="darkorange", label="min-max",
             )
             self._ax_values.legend(loc="upper right", fontsize=8)

@@ -14,7 +14,7 @@ Algorithm (same order as C++ MAIN + channel helper):
     5. in_channel check  — node is "in channel" iff ds + dd < span + width
 
 The elliptical channel selects all nodes whose combined distance to both
-endpoints is within `width` of the straight source–destination path length.
+endpoints is within `width` of the straight source-destination path length.
 
 Log files:
     Per-node logs written to examples/logs/node_<id>_channel_broadcast.log
@@ -46,7 +46,8 @@ except ImportError:
 
 DEVICES = 30        # number of nodes
 COMM = 100          # communication radius
-SIDE = int(math.isqrt(DEVICES * 3000)) + 1   # deployment area side ≈ sqrt(devices*3000)
+# deployment area side ≈ sqrt(devices*3000)
+SIDE = int(math.isqrt(DEVICES * 3000)) + 1
 HEIGHT = 100        # deployment area height
 CHANNEL_WIDTH = 20  # ellipse half-width
 SPEED = 10          # movement speed per round
@@ -227,7 +228,8 @@ def _demo_simulate() -> None:
             # Step 2: BIS distance to source
             ds = _bis_distance(
                 s.is_source,
-                [ns.source_dist for ns in nbr_s if math.isfinite(ns.source_dist)],
+                [ns.source_dist for ns in nbr_s if math.isfinite(
+                    ns.source_dist)],
             )
 
             # Step 3: BIS distance to destination
@@ -286,7 +288,8 @@ def _demo_simulate() -> None:
 
     in_channel_count = sum(1 for s in states.values() if s.in_channel)
     print(f"    Wrote {DEVICES} log files → {LOG_DIR}/")
-    print(f"    Last round: {in_channel_count}/{DEVICES} nodes inside the channel")
+    print(
+        f"    Last round: {in_channel_count}/{DEVICES} nodes inside the channel")
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +323,8 @@ def main() -> None:
 
     print("\n[3/3] Running demo simulation and writing per-node logs...")
     print(f"    Nodes: {DEVICES}  |  Rounds: {NUM_ROUNDS}")
-    print(f"    Source: node 0  |  Destination: node 1  |  Channel width: {CHANNEL_WIDTH}")
+    print(
+        f"    Source: node 0  |  Destination: node 1  |  Channel width: {CHANNEL_WIDTH}")
     _demo_simulate()
 
     print("\nAlgorithm summary:")

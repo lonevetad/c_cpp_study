@@ -407,9 +407,9 @@ src/fcpp_bridge/
 ### Phase 2: Transpiler (Weeks 2-4) ✅
 
 - [x] AST visitor → C++ emitter (`PythonAstVisitor` for all ops, calls, constants, attrs, subscripts)
-- [x] Transpile simple expressions (literals, binary ops: +−×÷%, **, all comparisons)
+- [x] Transpile simple expressions (literals, binary ops: +−\*÷%, \*\*, all comparisons)
 - [x] Transpile primitives (nbr, old, fold_hood via AstVisitor; full in-body transpilation is a TODO stub)
-- [x] Type inference for generated C++ (`AggregateType.infer` for all primitives, list, tuple, dict, set, frozenset, Optional, Union, dataclass; C++14–C++23 proxy types; TypeVar/TemplateParam)
+- [x] Type inference for generated C++ (`AggregateType.infer` for all primitives, list, tuple, dict, set, frozenset, Optional, Union, dataclass; C++14-C++23 proxy types; TypeVar/TemplateParam)
 - [x] Generated code compiles (even if incorrect at runtime)
 - [x] 50+ tests — **55 tests**
 
@@ -598,7 +598,7 @@ src/fcpp_bridge/
     - `CppType` converted from `@dataclass` to explicit `__init__` with keyword-only parameters; added `is_template`, `cpp_std`, `required_includes` fields; defensive copy in constructor; explicit `__repr__`, `__eq__`, `__hash__`
     - `_CppProxy` base uses `__init_subclass__` hook so subclasses declare their C++ template via class keyword args instead of manual variable assignment; each subclass owns a defensive copy of `_required_includes`
     - `_BoundCppProxy` uses explicit `__init__` (no `__slots__`)
-    - 14 proxy classes covering C++14–C++23: `CppVector`, `CppArray[T,N]`, `CppSet`, `CppUnorderedSet`, `CppMultiSet`, `CppMap`, `CppUnorderedMap`, `CppMultiMap`, `CppPair`, `CppOptional`, `CppVariant`, `CppAny`, `CppSpan`, `CppExpected`, `CppMdSpan`
+    - 14 proxy classes covering C++14-C++23: `CppVector`, `CppArray[T,N]`, `CppSet`, `CppUnorderedSet`, `CppMultiSet`, `CppMap`, `CppUnorderedMap`, `CppMultiMap`, `CppPair`, `CppOptional`, `CppVariant`, `CppAny`, `CppSpan`, `CppExpected`, `CppMdSpan`
     - `TemplateParam("T")` for unresolved template type parameters
     - `AggregateType.infer()` extended for `set[T]`, `frozenset[T]`, `Optional[T]`, `Union[T1,T2,…]`, `TypeVar`, `bytes`
     - Transpiler auto-emits `required_includes` headers for the inferred state type
@@ -637,9 +637,9 @@ src/fcpp_bridge/
     - `_IpcNodeBase.node_count`: `SwarmProcess` returns `num_nodes`; `PhysicalNode` returns `len(_seen_node_ids) or 1`
     - Progress tracked in `PHYSICAL_DEPLOYMENT_JOURNAL.md`
 16. [x] Pluggable liveness strategies (v1.3) — +23 new tests
-    - `ipc/liveness_strategy.py`: `LivenessStrategy` ABC — `on_snapshot(snapshot)`, `check(**kwargs) → Dict[int, bool]`, `discard(node_id)`, `close()`.  Unknown kwargs silently ignored for forward compat.
-    - `PassiveHeartbeatStrategy(timeout=30.0)`: alive if snapshot received within timeout; per-call override via `check(timeout=...)`.  Default strategy.
-    - `ActivePingStrategy(backend_getter, ping_timeout=2.0)`: sends `{"cmd": "ping", "node_id": n}` via IPC backend, expects `{"status": "pong"}`; `backend_getter` is a lambda so reconnects are transparent.  Requires C++ ping handler.
+    - `ipc/liveness_strategy.py`: `LivenessStrategy` ABC — `on_snapshot(snapshot)`, `check(**kwargs) → Dict[int, bool]`, `discard(node_id)`, `close()`. Unknown kwargs silently ignored for forward compat.
+    - `PassiveHeartbeatStrategy(timeout=30.0)`: alive if snapshot received within timeout; per-call override via `check(timeout=...)`. Default strategy.
+    - `ActivePingStrategy(backend_getter, ping_timeout=2.0)`: sends `{"cmd": "ping", "node_id": n}` via IPC backend, expects `{"status": "pong"}`; `backend_getter` is a lambda so reconnects are transparent. Requires C++ ping handler.
     - `AlwaysAliveStrategy()`: always returns True for every tracked node; for testing / disabling checks.
     - `_IpcNodeBase` updated: `liveness_strategy=` constructor kwarg; `set_liveness_strategy(strat)` closes old + installs new; `_heartbeat_timestamps` backward-compat property returns `strat._timestamps` for passive strategy; `check_liveness(timeout=30.0, **kwargs)` delegates to strategy; `_discard_node_from_liveness(node_id)` calls `strategy.discard()`.
     - `SwarmProcess.remove_node` now calls `_discard_node_from_liveness` instead of direct dict access.

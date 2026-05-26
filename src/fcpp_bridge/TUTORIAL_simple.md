@@ -1,7 +1,7 @@
 # fcpp_bridge — Simple Tutorial
 
-**Goal**: Build a 20-node swarm where node 3 is the *source* and node 18 is the
-*destination*.  The aggregate program computes:
+**Goal**: Build a 20-node swarm where node 3 is the _source_ and node 18 is the
+_destination_. The aggregate program computes:
 
 1. The BIS-distance from source to every node (including the destination).
 2. The hop count from source to every node via `nbr` + `min_hood`.
@@ -12,18 +12,28 @@ The tutorial walks through every stage of the pipeline: Python DSL → C++ → c
 
 ---
 
+> **What works without a C++ toolchain**
+>
+> Steps 1-3 (define, transpile, write C++) run entirely in Python and need no compiler.
+> Steps 4-7 (compile, run, IPC, listeners) require FCPP headers and `g++` — see
+> Prerequisites below.
+> The **pure-Python fallback simulation** at the end of this file also runs with zero
+> C++ setup.
+
+---
+
 ## Prerequisites
 
-| Requirement | Notes |
-|-------------|-------|
-| Python 3.10+ | `python --version` |
-| `fcpp_bridge` package on `PYTHONPATH` | `export PYTHONPATH=/path/to/c_cpp_study/src` |
-| FCPP C++ framework headers | Clone from `github.com/fcpp/fcpp`; set `FCPP_SRC` env var |
-| `g++` ≥ 9 with C++14 support | `g++ --version` |
-| (Optional) `lld` linker | Faster linking on Linux |
+| Requirement                           | Notes                                                     |
+| ------------------------------------- | --------------------------------------------------------- |
+| Python 3.10+                          | `python --version`                                        |
+| `fcpp_bridge` package on `PYTHONPATH` | `export PYTHONPATH=/path/to/c_cpp_study/src`              |
+| FCPP C++ framework headers            | Clone from `github.com/fcpp/fcpp`; set `FCPP_SRC` env var |
+| `g++` ≥ 9 with C++14 support          | `g++ --version`                                           |
+| (Optional) `lld` linker               | Faster linking on Linux                                   |
 
-> **No C++ toolchain?**  Skip Steps 3–5 and run the pure-Python simulation at
-> the end of this file instead.  It is algorithmically identical.
+> **No C++ toolchain?** Skip Steps 3-5 and run the pure-Python simulation at
+> the end of this file instead. It is algorithmically identical.
 
 ---
 
@@ -46,7 +56,7 @@ Create `hop_channel.py`:
 """
 Hop-channel example.
 
-Topology: 20 nodes randomly placed in a 500 × 500 area.
+Topology: 20 nodes randomly placed in a 500 * 500 area.
 Source:   node ID 3  (is_source = True)
 Destination: node ID 18 (is_dest = True)
 
@@ -135,8 +145,8 @@ class HopChannelAggregate:
 ```
 
 **Why `# noqa: F821`?**
-The FCPP primitives (`bis_distance`, `nbr`, `min_hood`, `broadcast`) are *unbound
-names* in Python—they are not imported.  The transpiler recognises them by name
+The FCPP primitives (`bis_distance`, `nbr`, `min_hood`, `broadcast`) are _unbound
+names_ in Python—they are not imported. The transpiler recognises them by name
 from the `_FCPP_PRIMITIVES` dictionary and injects the `CALL` macro automatically.
 Linters flag them as undefined; `# noqa: F821` silences that warning.
 
@@ -231,8 +241,8 @@ g++ -std=c++14 -Wall -Wextra -O2 \
     -o build/hop_channel
 ```
 
-> **Cache behaviour**: `get_or_compile()` hashes the C++ source (SHA-256).  If the
-> hash matches a cached binary, compilation is skipped.  Delete `build/` to force
+> **Cache behaviour**: `get_or_compile()` hashes the C++ source (SHA-256). If the
+> hash matches a cached binary, compilation is skipped. Delete `build/` to force
 > a fresh build.
 
 ---
@@ -307,7 +317,7 @@ with SwarmProcess(binary, num_nodes=NUM_NODES) as swarm:
 
 ## Step 7 — Consume updates
 
-After 3–5 rounds the spanning tree converges.  The `on_update` callback logs
+After 3-5 rounds the spanning tree converges. The `on_update` callback logs
 something like:
 
 ```
@@ -316,7 +326,7 @@ INFO  Round 4 | destination node 18 | dist=4.00 hops=4 source_id=3
 ```
 
 This tells you: node 18 is **4 hops away** from source node 3, the source ID
-(`3`) was received via `broadcast`, and the BIS distance is **4.0** (4 hops ×
+(`3`) was received via `broadcast`, and the BIS distance is **4.0** (4 hops \*
 1.0 metric = 4.0 with a unitary metric).
 
 ---
@@ -380,6 +390,50 @@ if __name__ == "__main__":
 
 ---
 
+## Running individual steps with `end_to_end.py`
+
+For debugging or incremental development you can run each pipeline stage on its own
+without re-running earlier stages. `examples/end_to_end.py` supports two mutually
+exclusive flags:
+
+| Flag                    | Meaning                                                    |
+| ----------------------- | ---------------------------------------------------------- |
+| `--from STEP`           | Run `STEP` and every stage that follows it                 |
+| `--steps STEP [STEP …]` | Run only the explicitly listed stages (in canonical order) |
+
+**Step names**: `validate` → `transpile` → `compile` → `run`
+
+The script writes two artifact files so a later stage can pick up where a prior run
+left off:
+
+| Stage       | Artifact written                                             |
+| ----------- | ------------------------------------------------------------ |
+| `transpile` | `.fcpp_bridge_cpp/consensus_latest.cpp`                      |
+| `compile`   | `.fcpp_bridge_build/.latest_binary` (stores the binary path) |
+
+```bash
+export PYTHONPATH=/path/to/c_cpp_study/src
+
+# Run everything
+python src/fcpp_bridge/examples/end_to_end.py
+
+# Run only validate + transpile (no compiler needed)
+python src/fcpp_bridge/examples/end_to_end.py --steps validate transpile
+
+# Resume from compile (loads consensus_latest.cpp from disk)
+python src/fcpp_bridge/examples/end_to_end.py --from compile
+
+# Run only the simulation step (no compiler needed)
+python src/fcpp_bridge/examples/end_to_end.py --steps run --nodes 20 --rounds 15
+
+# If compile is skipped but the artifact is missing, the script prints a clear error:
+# [error] 'compile' requires a prior transpile run.
+#         Expected artifact: .fcpp_bridge_cpp/consensus_latest.cpp
+#         Run:  python end_to_end.py --steps transpile
+```
+
+---
+
 ## Shell commands — everything at a glance
 
 ```bash
@@ -405,8 +459,8 @@ PYTHONPATH=src pytest my_project/tests/ -v
 
 ## Pure-Python fallback simulation
 
-No C++ toolchain?  The pure-Python simulation below runs the same algorithm
-without compiling anything.  It mirrors exactly how the FCPP examples in
+No C++ toolchain? The pure-Python simulation below runs the same algorithm
+without compiling anything. It mirrors exactly how the FCPP examples in
 `src/fcpp_bridge/examples/` work.
 
 ```python
@@ -486,7 +540,7 @@ Run it:
 python pure_sim.py
 ```
 
-Expected output (topology is random; values stabilise after 3–5 rounds):
+Expected output (topology is random; values stabilise after 3-5 rounds):
 
 ```
 Round  0 | dest=18 dist=inf hops=999999 source_id=-1

@@ -19,10 +19,10 @@ semantics.
 What determines how a type must be managed inside a `std::map` is solely whether
 its values are stored **by value** or **by pointer**:
 
-| Storage model | Heap allocations/entry | Map destructor cleans up? | Cleanup burden |
-|---|---|---|---|
-| `map<K, T>` — value | 1 node (T sits inline) | Yes — full RAII | None |
-| `map<K, T*>` — pointer | 1 node + 1 T object | Node only — NOT T* | Manual `delete` |
+| Storage model          | Heap allocations/entry | Map destructor cleans up? | Cleanup burden  |
+| ---------------------- | ---------------------- | ------------------------- | --------------- |
+| `map<K, T>` — value    | 1 node (T sits inline) | Yes — full RAII           | None            |
+| `map<K, T*>` — pointer | 1 node + 1 T object    | Node only — NOT T\*       | Manual `delete` |
 
 `Point` (examples 3a/3b) is stored by value → RAII.  
 `Point2` (examples 5a/5b) is stored as `Point2*` → requires explicit `delete`,
@@ -92,13 +92,13 @@ an updated `main()`. The original eight examples are **completely unchanged**.
 
 New additions over `test_map.cpp`:
 
-| Addition | Description |
-|---|---|
-| `#include "simple_struct2.h"` | pulls in `Point2` |
-| `display(const Point2*)` overload | converts a `Point2*` to its `to_string()` representation, or `"null"` |
-| `ex5a_int_to_point2()` | `map<int32_t, Point2*>` — two heap allocations per entry, manual cleanup |
-| `ex5b_str_to_point2()` | `map<std::string, Point2*>` — up to three heap allocations, manual cleanup |
-| Updated `main()` | calls all 10 examples and writes to `test_map2_output.txt` |
+| Addition                          | Description                                                                |
+| --------------------------------- | -------------------------------------------------------------------------- |
+| `#include "simple_struct2.h"`     | pulls in `Point2`                                                          |
+| `display(const Point2*)` overload | converts a `Point2*` to its `to_string()` representation, or `"null"`      |
+| `ex5a_int_to_point2()`            | `map<int32_t, Point2*>` — two heap allocations per entry, manual cleanup   |
+| `ex5b_str_to_point2()`            | `map<std::string, Point2*>` — up to three heap allocations, manual cleanup |
+| Updated `main()`                  | calls all 10 examples and writes to `test_map2_output.txt`                 |
 
 Each new example function follows the same structure as the originals:
 memory model block → logged insertions → map state → logged removals →
@@ -111,11 +111,11 @@ map state → explicit cleanup loop.
 
 ## Overall Test Summary
 
-The suite exercises `std::map` across **5 value types × 2 key types = 10 examples**.
+The suite exercises `std::map` across **5 value types \* 2 key types = 10 examples**.
 
-| Axis | Choices |
-|---|---|
-| **Key type** | `int32_t` (numeric order) · `std::string` (lexicographic order) |
+| Axis           | Choices                                                                 |
+| -------------- | ----------------------------------------------------------------------- |
+| **Key type**   | `int32_t` (numeric order) · `std::string` (lexicographic order)         |
 | **Value type** | `int32_t` · `std::string*` · `Point` (by value) · `Person*` · `Point2*` |
 
 Examples are grouped into two memory-management categories:
@@ -151,7 +151,7 @@ allocations per entry (4 for `Person*` including a possible `name_` buffer;
 ### Example 1b — `std::map<std::string, int32_t>`
 
 - **Key/Value:** string key (SSO-dependent heap), `int32_t` value inline.
-- **Heap allocations per entry:** 1 node + 0–1 key buffer (SSO-dependent).
+- **Heap allocations per entry:** 1 node + 0-1 key buffer (SSO-dependent).
 - **Cleanup:** fully automatic — `~std::string()` frees key buffers.
 - **Key ordering:** lexicographic.
 - **Insertions:** `delta`, `alpha`, `echo`, `beta`, `gamma` with values 40/10/50/20/30.
@@ -193,7 +193,7 @@ allocations per entry (4 for `Person*` including a possible `name_` buffer;
 ### Example 3b — `std::map<std::string, Point>`
 
 - **Key/Value:** `std::string` key (SSO-dependent); `Point` struct inline.
-- **Heap allocations per entry:** 1 node + 0–1 key buffer (SSO-dependent).
+- **Heap allocations per entry:** 1 node + 0-1 key buffer (SSO-dependent).
 - **Cleanup:** fully automatic; `~std::string()` + trivial `~Point()`.
 - **Key ordering:** lexicographic (`bot_left`, `bot_right`, `origin`, `top_left`, `top_right`).
 - **Insertions:** 5 named corner/origin points.

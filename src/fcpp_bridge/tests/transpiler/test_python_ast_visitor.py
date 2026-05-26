@@ -1,6 +1,8 @@
-"""Tests for PythonAstVisitor — all operator and FCPP primitive handling."""
+"""Tests for PythonAstVisitor — all operator, control-flow, and FCPP primitive handling."""
 
 import ast
+import inspect
+import textwrap
 import pytest
 from fcpp_bridge.transpiler import PythonAstVisitor, _FCPP_PRIMITIVES
 
@@ -15,6 +17,30 @@ def _ve(src: str) -> str:
     """Parse src as an eval-mode expression."""
     tree = ast.parse(src, mode="eval")
     return PythonAstVisitor().visit(tree.body)
+
+
+def _stmt(src: str) -> str:
+    """Parse a single statement and return its C++ equivalent."""
+    v = PythonAstVisitor()
+    return v.visit(ast.parse(src).body[0])
+
+
+def _body(fn) -> str:
+    """Transpile the full body of a zero-argument function to C++."""
+    source = textwrap.dedent(inspect.getsource(fn))
+    tree = ast.parse(source)
+    func_def = tree.body[0]
+    stmts = func_def.body
+    # skip docstring
+    if (
+        stmts
+        and isinstance(stmts[0], ast.Expr)
+        and isinstance(stmts[0].value, ast.Constant)
+        and isinstance(stmts[0].value.value, str)
+    ):
+        stmts = stmts[1:]
+    v = PythonAstVisitor()
+    return v.transpile_statements(stmts)
 
 
 # ============================================================================
@@ -432,3 +458,254 @@ def test_fcpp_call_with_lambda_arg_gossip():
 def test_fcpp_call_with_lambda_arg_split():
     src = "split(key, lambda x: x * 2)"
     assert _ve(src) == "split(CALL, key, [=](auto x) { return (x * 2); })"
+
+
+# ============================================================================
+# Phase 6: expressions — ternary, bool ops, unary, keyword args
+# ============================================================================
+
+
+def test_ternary_expression():
+    assert _ve("a if cond else b") == "(cond ? a : b)"
+
+
+def test_ternary_nested():
+    result = _ve("1 if x > 0 else 0")
+    assert "?" in result and ":" in result
+
+
+def test_bool_op_and():
+    assert "&&" in _ve("a and b")
+
+
+def test_bool_op_or():
+    assert "||" in _ve("a or b")
+
+
+def test_bool_op_chain():
+    result = _ve("a and b and c")
+    assert result.count("&&") == 2
+
+
+def test_unary_not():
+    result = _ve("not x")
+    assert "!" in result and "x" in result
+
+
+def test_unary_neg():
+    assert "(-x)" == _ve("-x")
+
+
+def test_keyword_args_in_call():
+    result = _v("MyState(value=v, distance=d)")
+    assert "MyState(" in result
+    assert "v" in result and "d" in result
+
+
+def test_list_literal():
+    result = _ve("[1, 2, 3]")
+    assert "{" in result and "1" in result
+
+
+def test_method_call_on_object():
+    result = _ve("obj.method(x, y)")
+    assert "obj.method(x, y)" == result
+
+
+# ============================================================================
+# Phase 6: statements — assign, augassign, return, pass
+# ============================================================================
+
+
+def test_assign_first_use_declares_auto():
+    result = _stmt("x = 42")
+    assert result == "auto x = 42;"
+
+
+def test_assign_second_use_no_auto():
+    v = PythonAstVisitor()
+    v.declared_vars.add("x")
+    node = ast.parse("x = 99").body[0]
+    assert v.visit(node) == "x = 99;"
+
+
+def test_augassign_add():
+    assert _stmt("x += 1") == "x += 1;"
+
+
+def test_augassign_sub():
+    assert _stmt("x -= 2") == "x -= 2;"
+
+
+def test_augassign_mul():
+    assert _stmt("x *= 3") == "x *= 3;"
+
+
+def test_return_statement():
+    assert _stmt("return x") == "return x;"
+
+
+def test_return_none():
+    assert _stmt("return") == "return;"
+
+
+def test_pass_statement():
+    assert _stmt("pass") == ""
+
+
+def test_break_statement():
+    assert _stmt("break") == "break;"
+
+
+def test_continue_statement():
+    assert _stmt("continue") == "continue;"
+
+
+# ============================================================================
+# Phase 6: if / elif / else
+# ============================================================================
+
+
+def test_if_simple():
+    result = _stmt("if x > 0:\n    y = 1")
+    assert "if (" in result and "x > 0" in result
+
+
+def test_if_with_else():
+    def fn():
+        if x > 0:  # noqa: F821
+            y = 1  # noqa: F821
+        else:
+            y = 0  # noqa: F821
+    result = _body(fn)
+    assert "if (" in result
+    assert "} else {" in result
+
+
+def test_if_elif_else():
+    def fn():
+        if a == 1:  # noqa: F821
+            x = 10  # noqa: F821
+        elif a == 2:  # noqa: F821
+            x = 20  # noqa: F821
+        else:
+            x = 0  # noqa: F821
+    result = _body(fn)
+    assert "if (" in result
+    assert "else if (" in result
+    assert "} else {" in result
+
+
+def test_if_early_return():
+    def fn():
+        if not values:  # noqa: F821
+            return s  # noqa: F821
+        return s + 1  # noqa: F821
+    result = _body(fn)
+    assert "if (" in result
+    assert result.count("return") == 2
+
+
+# ============================================================================
+# Phase 6: while loop
+# ============================================================================
+
+
+def test_while_loop():
+    def fn():
+        while i < 10:  # noqa: F821
+            i += 1  # noqa: F821
+    result = _body(fn)
+    assert "while (" in result
+    assert "i < 10" in result
+    assert "i += 1" in result
+
+
+def test_while_with_break():
+    def fn():
+        while True:  # noqa: F821
+            if done:  # noqa: F821
+                break
+    result = _body(fn)
+    assert "while (True)" in result
+    assert "break;" in result
+
+
+# ============================================================================
+# Phase 6: for-range loop
+# ============================================================================
+
+
+def test_for_range_one_arg():
+    def fn():
+        for i in range(10):
+            x = i  # noqa: F821
+    result = _body(fn)
+    assert "for (int i = 0; i < 10; ++i)" in result
+
+
+def test_for_range_two_args():
+    def fn():
+        for i in range(2, 8):
+            x = i  # noqa: F821
+    result = _body(fn)
+    assert "for (int i = 2; i < 8; ++i)" in result
+
+
+def test_for_range_three_args():
+    def fn():
+        for i in range(0, 20, 2):
+            x = i  # noqa: F821
+    result = _body(fn)
+    assert "for (int i = 0; i < 20; i += 2)" in result
+
+
+# ============================================================================
+# Phase 6: match/case → switch
+# ============================================================================
+
+
+def test_match_case_switch():
+    def fn():
+        match mode:  # noqa: F821
+            case 1:
+                x = 10  # noqa: F821
+            case 2:
+                x = 20  # noqa: F821
+            case _:
+                x = 0  # noqa: F821
+    result = _body(fn)
+    assert "switch (" in result
+    assert "case 1:" in result
+    assert "case 2:" in result
+    assert "default:" in result
+
+
+# ============================================================================
+# Phase 6: transpile_statements multi-statement body
+# ============================================================================
+
+
+def test_transpile_full_compute_body():
+    def fn():
+        is_src = node_id == 0  # noqa: F821
+        dist = bis_distance(is_src, 1.0, 100.0)  # noqa: F821
+        return dist  # noqa: F821
+    result = _body(fn)
+    assert "auto is_src" in result
+    assert "auto dist" in result
+    assert "return dist;" in result
+
+
+def test_transpile_indentation():
+    def fn():
+        if x:  # noqa: F821
+            return 1
+        return 0
+    result = _body(fn)
+    lines = result.split("\n")
+    # outer if is indented 4 spaces
+    assert lines[0].startswith("    if (")
+    # inner return is indented 8 spaces
+    inner = [l for l in lines if "return 1" in l][0]
+    assert inner.startswith("        ")

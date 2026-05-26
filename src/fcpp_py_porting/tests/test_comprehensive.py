@@ -88,7 +88,7 @@ class TestVec3Comprehensive:
 
     def test_vec3_cross_product_simulation(self) -> None:
         """Test cross product properties (via simulation with dot product)."""
-        # If c = a × b, then c ⊥ a and c ⊥ b
+        # If c = a * b, then c ⊥ a and c ⊥ b
         # We can compute cross product values and verify orthogonality
         a = Vec3(1.0, 0.0, 0.0)
         b = Vec3(0.0, 1.0, 0.0)
