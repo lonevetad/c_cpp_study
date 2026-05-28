@@ -32,10 +32,14 @@ Differences from original C++:
 import math
 import random
 from dataclasses import dataclass
-from pathlib import Path
 
 from fcpp_bridge.python_dsl import aggregate_function, Neighborhood
-from examples._example_utils import report_validation, report_transpilation
+from fcpp_bridge.examples._example_utils import (
+    neighbors_of,
+    report_validation,
+    report_transpilation,
+)
+from fcpp_bridge.examples.abstract_example import AbstractExample
 
 # ---------------------------------------------------------------------------
 # Simulation constants (matching collection_compare.hpp)
@@ -49,8 +53,6 @@ NUM_NODES = 20      # swarm size
 NUM_ROUNDS = 30     # simulation rounds
 SOURCE_SWITCH = 250 # source switches from node 0 to node 1 at this simulated time
 DIST_WEIGHT = 100.0 # WMP weight parameter
-
-LOG_DIR = Path(__file__).parent / "logs"
 
 
 # ---------------------------------------------------------------------------
@@ -207,56 +209,55 @@ class CollectionCompareAggregate:
 
 
 # ---------------------------------------------------------------------------
-# Demo simulation
+# Demo simulation — AbstractExample subclass
 # ---------------------------------------------------------------------------
 
-def _demo_simulate() -> None:
-    """
-    Pure-Python approximation of the collection-compare algorithm.
+class CollectionCompareExample(AbstractExample):
+    """Pure-Python faithful implementation of collection_compare.hpp.
 
     Runs both case studies (device_counting and progress_tracking) and writes
     per-node log files.
+
+    Nodes are stored as dict[int, CollectionCompareState]; the initial set is
+    range(NUM_NODES) but nodes may join or leave between rounds.
     """
-    random.seed(11)
 
-    positions = {
-        i: (random.uniform(0.0, AREA_W), random.uniform(0.0, AREA_H))
-        for i in range(NUM_NODES)
-    }
+    def __init__(self, seed: int = 11):
+        self._rng = random.Random(seed)
+        self._final_states: dict = {}
 
-    states = {
-        i: CollectionCompareState(is_source=(i == 0))
-        for i in range(NUM_NODES)
-    }
+    @property
+    def log_prefix(self) -> str:
+        return "collection_compare"
 
-    def neighbors_of(nid):
-        x, y = positions[nid]
-        return [
-            j for j in range(NUM_NODES)
-            if j != nid
-            and math.dist((x, y), positions[j]) <= COMM
-        ]
+    def initial_positions(self) -> dict:
+        return {
+            i: (self._rng.uniform(0.0, AREA_W), self._rng.uniform(0.0, AREA_H))
+            for i in range(NUM_NODES)
+        }
 
-    LOG_DIR.mkdir(exist_ok=True)
-    log_files = {}
+    def initial_states(self, positions: dict) -> dict:
+        return {
+            i: CollectionCompareState(is_source=(i == 0))
+            for i in positions
+        }
 
-    for round_num in range(NUM_ROUNDS):
-        # Switch source halfway through to match original C++ SOURCE_SWITCH logic
-        source_id = 1 if round_num >= (NUM_ROUNDS // 2) else 0
-
+    def round_step(self, round_num: int, positions: dict, states: dict) -> tuple:
+        new_positions = {}
         new_states = {}
 
-        for nid in range(NUM_NODES):
-            s = states[nid]
-            nbrs = neighbors_of(nid)
-            nbr_s = [states[n] for n in nbrs]
+        # Switch source halfway through (mirrors original C++ SOURCE_SWITCH logic)
+        source_id = 1 if round_num >= (NUM_ROUNDS // 2) else 0
 
-            # Step 1: random walk
-            x, y = positions[nid]
-            positions[nid] = (
-                max(0.0, min(AREA_W, x + random.uniform(-SPEED, SPEED))),
-                max(0.0, min(AREA_H, y + random.uniform(-SPEED, SPEED))),
+        for nid, (x, y) in positions.items():
+            new_positions[nid] = (
+                max(0.0, min(AREA_W, x + self._rng.uniform(-SPEED, SPEED))),
+                max(0.0, min(AREA_H, y + self._rng.uniform(-SPEED, SPEED))),
             )
+
+        for nid in positions:
+            nbrs = neighbors_of(positions, nid, COMM)
+            nbr_s = [states[n] for n in nbrs]
 
             # Step 2: abf_distance
             is_source = (nid == source_id)
@@ -267,8 +268,7 @@ def _demo_simulate() -> None:
             else:
                 dist = math.inf
 
-            # Step 3: device_counting — SP collection (sum of 1.0 per node)
-            # SP: each node sums its own 1.0 + contributions from children
+            # Step 3: device_counting — SP/MP/WMP collection (sum of 1.0 per node)
             if is_source:
                 children = [ns for ns in nbr_s if math.isfinite(ns.distance)]
                 spc_sum = 1.0 + sum(ns.spc_sum for ns in children if ns.distance > dist)
@@ -278,7 +278,7 @@ def _demo_simulate() -> None:
                 spc_sum = mpc_sum = wmpc_sum = 0.0
 
             # Step 4: progress_tracking — max of per-node value
-            value = dist  # per-node scalar proxy
+            value = dist
             if is_source:
                 children = [ns for ns in nbr_s if math.isfinite(ns.distance)]
                 spc_max = max(
@@ -303,35 +303,34 @@ def _demo_simulate() -> None:
                 spc_max=spc_max, mpc_max=mpc_max, wmpc_max=wmpc_max,
             )
 
-            # Write log entry
-            if nid not in log_files:
-                log_path = LOG_DIR / f"node_{nid}_collection_compare.log"
-                lf = open(log_path, "w")
-                lf.write(
-                    f"# CollectionCompare — node {nid}\n"
-                    "# round,is_source,distance,"
-                    "spc_sum,mpc_sum,wmpc_sum,spc_max,mpc_max,wmpc_max\n"
-                )
-                log_files[nid] = lf
-            d = new_states[nid]
-            log_files[nid].write(
-                f"{round_num},{int(is_source)},{dist:.4f},"
-                f"{d.spc_sum:.4f},{d.mpc_sum:.4f},{d.wmpc_sum:.4f},"
-                f"{d.spc_max:.4f},{d.mpc_max:.4f},{d.wmpc_max:.4f}\n"
-            )
+        return new_positions, new_states
 
-        states = new_states
+    def log_header(self, node_id: int, state) -> str:
+        return (
+            f"# CollectionCompare — node {node_id}\n"
+            "# round,is_source,distance,"
+            "spc_sum,mpc_sum,wmpc_sum,spc_max,mpc_max,wmpc_max\n"
+        )
 
-    for lf in log_files.values():
-        lf.close()
+    def log_line(self, round_num: int, node_id: int, state) -> str:
+        return (
+            f"{round_num},{int(state.is_source)},{state.distance:.4f},"
+            f"{state.spc_sum:.4f},{state.mpc_sum:.4f},{state.wmpc_sum:.4f},"
+            f"{state.spc_max:.4f},{state.mpc_max:.4f},{state.wmpc_max:.4f}\n"
+        )
 
-    src_id = 1 if NUM_ROUNDS >= (NUM_ROUNDS // 2) else 0
-    src_state = states[src_id]
-    print(f"    Wrote {NUM_NODES} log files → {LOG_DIR}/")
-    print(f"    Final at source (node {src_id}): "
-          f"spc_sum={src_state.spc_sum:.1f}, "
-          f"mpc_sum={src_state.mpc_sum:.1f}, "
-          f"wmpc_sum={src_state.wmpc_sum:.1f}")
+    def on_round_complete(self, round_num: int, positions: dict, states: dict) -> None:
+        self._final_states = states
+
+    def on_simulation_end(self) -> None:
+        states = self._final_states
+        src_id = 1 if NUM_ROUNDS >= (NUM_ROUNDS // 2) else 0
+        src_state = states[src_id]
+        print(f"    Wrote {NUM_NODES} log files → {self.log_dir}/")
+        print(f"    Final at source (node {src_id}): "
+              f"spc_sum={src_state.spc_sum:.1f}, "
+              f"mpc_sum={src_state.mpc_sum:.1f}, "
+              f"wmpc_sum={src_state.wmpc_sum:.1f}")
 
 
 # ---------------------------------------------------------------------------
@@ -356,7 +355,7 @@ def main() -> None:
 
     print("\n[3/3] Running demo simulation and writing per-node logs...")
     print(f"    Nodes: {NUM_NODES}  |  Rounds: {NUM_ROUNDS}")
-    _demo_simulate()
+    CollectionCompareExample().run(NUM_ROUNDS)
 
     print("\nAlgorithm summary:")
     print("  Case study 1 — Device counting (local value = 1.0 per node):")

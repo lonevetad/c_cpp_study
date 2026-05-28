@@ -32,17 +32,24 @@ Differences from original C++:
       Python DSL uses 0 as a placeholder UID since node.nbr_uid() is C++ API.
     - status enum: C++ uses status::internal/border/terminated_output (enum class);
       Python uses integer constants STATUS_BORDER/INTERNAL/TERMINATED.
-    - routing_set uses placeholder UID 0 in DSL; actual UIDs in _demo_simulate().
+    - routing_set uses placeholder UID 0 in DSL; actual UIDs in demo simulation.
     - sp_collection uses frozenset (Python) instead of std::unordered_set<device_t>.
 """
 
 import math
 import random
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from fcpp_bridge.python_dsl import aggregate_function, Neighborhood
-from examples._example_utils import report_validation, report_transpilation
+from fcpp_bridge.examples._example_utils import (
+    neighbors_of,
+    SPAWN_STATUS_BORDER,
+    SPAWN_STATUS_INTERNAL,
+    SPAWN_STATUS_TERMINATED,
+    report_validation,
+    report_transpilation,
+)
+from fcpp_bridge.examples.abstract_example import AbstractExample
 
 # ---------------------------------------------------------------------------
 # Simulation constants
@@ -55,12 +62,10 @@ HEIGHT = 100        # deployment area height
 SPEED = 10          # movement speed per round
 NUM_ROUNDS = 60     # simulation rounds (C++ runs ~100 time units of simulation)
 
-LOG_DIR = Path(__file__).parent / "logs"
-
-# Status codes mapping to C++ enum class status
-STATUS_BORDER = 0        # node not in routing path
-STATUS_INTERNAL = 1      # node is in the routing path
-STATUS_TERMINATED = 2    # node is the message destination (terminated with output)
+# Status codes — aliases of the shared SPAWN_STATUS_* constants from _example_utils
+STATUS_BORDER = SPAWN_STATUS_BORDER          # node not in routing path
+STATUS_INTERNAL = SPAWN_STATUS_INTERNAL      # node is in the routing path
+STATUS_TERMINATED = SPAWN_STATUS_TERMINATED  # node is the message destination
 
 
 # ---------------------------------------------------------------------------
@@ -204,75 +209,77 @@ class MessageDispatchAggregate:
 
 
 # ---------------------------------------------------------------------------
-# Demo simulation
+# Demo simulation — AbstractExample subclass
 # ---------------------------------------------------------------------------
 
-def _demo_simulate() -> None:
-    """
-    Pure-Python approximation of the message-dispatch algorithm.
+def _bis_distance_msg(is_endpoint: bool, nbr_dists: list) -> float:
+    if is_endpoint:
+        return 0.0
+    if not nbr_dists:
+        return math.inf
+    return min(nbr_dists) + COMM * 0.1
+
+
+class MessageDispatchExample(AbstractExample):
+    """Pure-Python faithful implementation of message_dispatch.hpp.
 
     Implements the same 6 steps as compute() for log generation without a
     C++ compiler.  Messages are routed via a spanning tree rooted at device 0.
+
+    Nodes are stored as dict[int, MessageDispatchState]; the initial set is
+    range(DEVICES) but nodes may join or leave between rounds.
     """
-    random.seed(13)
 
-    positions = {
-        i: (random.uniform(0.0, SIDE), random.uniform(0.0, SIDE))
-        for i in range(DEVICES)
-    }
+    def __init__(self, seed: int = 13):
+        self._rng = random.Random(seed)
+        self._in_flight: dict = {}
+        self._total_received: dict = {}
 
-    states = {
-        i: MessageDispatchState(is_source=(i == 0))
-        for i in range(DEVICES)
-    }
+    @property
+    def log_prefix(self) -> str:
+        return "message_dispatch"
 
-    # Persistent per-node delivery tracking
-    total_received = {i: 0 for i in range(DEVICES)}
-    # in_flight: message (from, to, creation_round) -> set of current node IDs hosting it
-    in_flight: dict = {}
+    def initial_positions(self) -> dict:
+        return {
+            i: (self._rng.uniform(0.0, SIDE), self._rng.uniform(0.0, SIDE))
+            for i in range(DEVICES)
+        }
 
-    def neighbors_of(nid):
-        x, y = positions[nid]
-        return [
-            j for j in range(DEVICES)
-            if j != nid
-            and math.dist((x, y), positions[j]) <= COMM
-        ]
+    def initial_states(self, positions: dict) -> dict:
+        return {
+            i: MessageDispatchState(is_source=(i == 0))
+            for i in positions
+        }
 
-    def _bis_distance(is_endpoint, nbr_dists):
-        if is_endpoint:
-            return 0.0
-        if not nbr_dists:
-            return math.inf
-        return min(nbr_dists) + COMM * 0.1
+    def on_simulation_start(self) -> None:
+        self._in_flight = {}
+        self._total_received = {i: 0 for i in range(DEVICES)}
 
-    LOG_DIR.mkdir(exist_ok=True)
-    log_files = {}
-
-    for round_num in range(NUM_ROUNDS):
+    def round_step(self, round_num: int, positions: dict, states: dict) -> tuple:
+        new_positions = {}
         new_states = {}
         distances = {}
         routing_sets = {}
 
         # ── Step 1 + 2: move nodes and compute BIS distances ─────────────────
-        for nid in range(DEVICES):
-            x, y = positions[nid]
-            positions[nid] = (
-                max(0.0, min(SIDE, x + random.uniform(-SPEED, SPEED))),
-                max(0.0, min(SIDE, y + random.uniform(-SPEED, SPEED))),
+        for nid, (x, y) in positions.items():
+            new_positions[nid] = (
+                max(0.0, min(SIDE, x + self._rng.uniform(-SPEED, SPEED))),
+                max(0.0, min(SIDE, y + self._rng.uniform(-SPEED, SPEED))),
             )
 
-            nbrs = neighbors_of(nid)
+        for nid in positions:
+            nbrs = neighbors_of(positions, nid, COMM)
             nbr_s = [states[n] for n in nbrs]
-            distances[nid] = _bis_distance(
+            distances[nid] = _bis_distance_msg(
                 nid == 0,
                 [ns.center_dist for ns in nbr_s if math.isfinite(ns.center_dist)],
             )
 
         # ── Step 3: spanning-tree parents (min-distance neighbor) ─────────────
         parents = {}
-        for nid in range(DEVICES):
-            nbrs = neighbors_of(nid)
+        for nid in positions:
+            nbrs = neighbors_of(positions, nid, COMM)
             if not nbrs or nid == 0:
                 parents[nid] = -1
                 continue
@@ -280,13 +287,12 @@ def _demo_simulate() -> None:
             parents[nid] = best_nbr if distances[best_nbr] < distances[nid] else -1
 
         # ── Step 4: routing sets via sp_collection ────────────────────────────
-        # Iterative convergence: each node's routing_set = {self} ∪ children's sets
-        routing_sets = {nid: frozenset({nid}) for nid in range(DEVICES)}
-        for _ in range(8):  # enough iterations for convergence
+        routing_sets = {nid: frozenset({nid}) for nid in positions}
+        for _ in range(8):
             new_rs = {}
-            for nid in range(DEVICES):
-                # Children: neighbors whose parent is nid
-                children = [n for n in neighbors_of(nid) if parents.get(n) == nid]
+            for nid in positions:
+                children = [n for n in neighbors_of(positions, nid, COMM)
+                            if parents.get(n) == nid]
                 child_sets = [routing_sets[c] for c in children]
                 new_rs[nid] = frozenset({nid}).union(*child_sets) if child_sets \
                     else frozenset({nid})
@@ -294,22 +300,22 @@ def _demo_simulate() -> None:
 
         # ── Step 5: generate new messages (1% probability, rounds 10..50) ─────
         if 10 <= round_num <= 50:
-            for nid in range(DEVICES):
-                if random.random() < 0.01:
-                    to_id = random.randint(0, DEVICES - 2)
+            for nid in list(positions.keys()):
+                if self._rng.random() < 0.01:
+                    to_id = self._rng.randint(0, DEVICES - 2)
                     if to_id >= nid:
                         to_id += 1
                     m = (nid, to_id, round_num)
-                    if m not in in_flight:
-                        in_flight[m] = True  # newly spawned
+                    if m not in self._in_flight:
+                        self._in_flight[m] = True
 
         # Route messages: process stays alive at node if inpath
         delivered_this_round = set()
-        active_procs = {nid: 0 for nid in range(DEVICES)}
-        for m in list(in_flight.keys()):
+        active_procs = {nid: 0 for nid in positions}
+        for m in list(self._in_flight.keys()):
             from_id, to_id, _ = m
             reached_dest = False
-            for nid in range(DEVICES):
+            for nid in positions:
                 rs = routing_sets[nid]
                 inpath = (from_id in rs) or (to_id in rs)
                 if inpath:
@@ -318,49 +324,44 @@ def _demo_simulate() -> None:
                         reached_dest = True
             if reached_dest:
                 delivered_this_round.add(m)
-                total_received[to_id] += 1
+                if to_id in self._total_received:
+                    self._total_received[to_id] += 1
 
         for m in delivered_this_round:
-            del in_flight[m]
+            del self._in_flight[m]
 
-        # ── Build new states and write logs ───────────────────────────────────
-        for nid in range(DEVICES):
+        # ── Build new states ──────────────────────────────────────────────────
+        for nid in positions:
             is_src = (nid == 0)
             ds = distances[nid]
-
             new_states[nid] = MessageDispatchState(
                 is_source=is_src,
                 center_dist=ds,
                 routing_set=routing_sets[nid],
-                received_count=total_received[nid],
+                received_count=self._total_received.get(nid, 0),
                 active_procs=active_procs[nid],
             )
 
-            if nid not in log_files:
-                log_path = LOG_DIR / f"node_{nid}_message_dispatch.log"
-                lf = open(log_path, "w")
-                lf.write(
-                    f"# MessageDispatch — node {nid}\n"
-                    "# round,is_source,center_dist,"
-                    "routing_set_size,received_count,active_procs\n"
-                )
-                log_files[nid] = lf
+        return new_positions, new_states
 
-            d = new_states[nid]
-            log_files[nid].write(
-                f"{round_num},{int(is_src)},{ds:.4f},"
-                f"{len(d.routing_set)},{d.received_count},{d.active_procs}\n"
-            )
+    def log_header(self, node_id: int, state) -> str:
+        return (
+            f"# MessageDispatch — node {node_id}\n"
+            "# round,is_source,center_dist,"
+            "routing_set_size,received_count,active_procs\n"
+        )
 
-        states = new_states
+    def log_line(self, round_num: int, node_id: int, state) -> str:
+        return (
+            f"{round_num},{int(state.is_source)},{state.center_dist:.4f},"
+            f"{len(state.routing_set)},{state.received_count},{state.active_procs}\n"
+        )
 
-    for lf in log_files.values():
-        lf.close()
-
-    total_msgs_delivered = sum(total_received.values())
-    print(f"    Wrote {DEVICES} log files → {LOG_DIR}/")
-    print(f"    Total messages delivered across all nodes: {total_msgs_delivered}")
-    print(f"    Messages still in flight: {len(in_flight)}")
+    def on_simulation_end(self) -> None:
+        total_msgs_delivered = sum(self._total_received.values())
+        print(f"    Wrote {DEVICES} log files → {self.log_dir}/")
+        print(f"    Total messages delivered across all nodes: {total_msgs_delivered}")
+        print(f"    Messages still in flight: {len(self._in_flight)}")
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +387,7 @@ def main() -> None:
     print("\n[3/3] Running demo simulation and writing per-node logs...")
     print(f"    Nodes: {DEVICES}  |  Rounds: {NUM_ROUNDS}  |  Source: node 0")
     print(f"    Messages generated during rounds 10..50  |  Channel width: {COMM}")
-    _demo_simulate()
+    MessageDispatchExample().run(NUM_ROUNDS)
 
     print("\nAlgorithm summary:")
     print("  1. rectangle_walk   — random 3D movement")

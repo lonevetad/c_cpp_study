@@ -1,0 +1,117 @@
+SESSION RECORD — 2026-05-28g
+Topic: AbstractExample refactor of all demo simulations + match guard/OR patterns
+Branch: bugfix/fcpp_bridge/it1
+Tests: 624 pass, 0 fail
+
+═══════════════════════════════════════════════════════════════════════════
+SUMMARY OF WORK
+═══════════════════════════════════════════════════════════════════════════
+
+This session completed a large multi-part task:
+
+  1. MATCH GUARD CLAUSE + OR PATTERN TRANSPILATION (completed in prior session)
+     - Added case.guard support to visit_Match() in python_ast_visitor.py
+     - Added ast.MatchOr support (multiple case labels sharing one body)
+     - +8 new transpiler tests (616 → 624)
+     - Wrote development_history/match_guard_or_pattern.md
+     - Updated DSL_GUIDE.md section 6.7
+
+  2. bridge.md UPDATE (completed in prior session)
+     - Updated src/bridge.md from v0.6/v1.3 → v2.0
+     - Rewrote file structure, added entries 17–20 in getting-started checklist
+
+  3. AbstractExample BASE CLASS (completed in prior session)
+     - Created examples/abstract_example.py with Template Method pattern
+     - Properties/methods: log_prefix, log_dir, initial_positions(),
+       initial_states(), round_step(), log_header(), log_line()
+     - Optional hooks: on_simulation_start(), on_simulation_end(),
+       on_round_complete()
+     - run() handles log-file lifecycle including dynamic node join/leave
+
+  4. EXAMPLE REFACTORING (this session)
+     Fixed chain_decaying.py double-simulation bug in main():
+       - Added self._final_states attribute
+       - Override on_round_complete() to store states each round
+       - main() now reads example._final_states instead of re-running
+
+     Refactored all remaining examples (each removes _demo_simulate() and
+     from pathlib import Path, adds AbstractExample subclass):
+
+     channel_broadcast.py:
+       - ChannelBroadcastExample(AbstractExample)
+       - Extracted _bis_distance() as module-level helper
+       - on_simulation_end() prints channel-member count
+       - on_round_complete() stores _final_states
+
+     collection_compare.py:
+       - CollectionCompareExample(AbstractExample)
+       - Source-switch logic preserved: source_id = 1 if round >= NUM_ROUNDS//2
+       - on_simulation_end() prints final source collection values
+       - on_round_complete() stores _final_states
+
+     message_dispatch.py:
+       - MessageDispatchExample(AbstractExample)
+       - Cross-round state: self._in_flight, self._total_received
+       - on_simulation_start() initializes those dicts
+       - on_simulation_end() prints delivery stats
+       - Extracted _bis_distance_msg() as module-level helper
+
+     worker_role_assignment.py:
+       - WorkerRoleExample(AbstractExample)
+       - Cross-round state: self._in_flight, self._total_delivered
+       - on_simulation_start() initializes dicts + opens receiver_messages.log
+       - on_simulation_end() closes receiver_messages.log + prints summary
+       - round_step() writes recv_log entries inline (not in on_round_complete)
+       - Extracted _bis_distance_worker() as module-level helper
+
+     communication_roles_assignment.py:
+       - CommunicationRolesExample(AbstractExample)
+       - __init__ calls _setup_network() to determine fixed positions/roles
+       - initial_positions() / initial_states() return pre-computed results
+       - on_simulation_start() opens comm_receiver_messages.log
+       - on_simulation_end() closes log + prints summary
+       - All setup helpers (_build_and_migrate_network, _place_points,
+         _assign_initial_roles, _setup_network) remain as module-level functions
+
+  5. TEST SUITE + DOCS
+     - Full suite: 624 pass, 0 fail  (grep confirmed in README and bridge.md)
+     - Corrected README.md and bridge.md: 629 → 624 (prior session had estimated
+       629 anticipating AbstractExample tests that were not written)
+     - Smoke-tested all 6 AbstractExample subclasses with 3-round runs
+
+═══════════════════════════════════════════════════════════════════════════
+KEY DESIGN DECISIONS
+═══════════════════════════════════════════════════════════════════════════
+
+Dynamic node dict:
+  All examples now use dict[int, state] where node presence = dict key presence.
+  Nodes can join/leave by adding/removing keys from the returned dict in round_step.
+  AbstractExample.run() handles log file open/close when nodes appear/disappear.
+
+Extra log files (receiver_messages.log, comm_receiver_messages.log):
+  Opened in on_simulation_start(), written inside round_step() or via inline
+  logic, closed in on_simulation_end().  AbstractExample.run() calls all hooks
+  at the right points.
+
+Cross-round state (in_flight, distances, etc.):
+  Stored as instance attributes (self._...) initialized in __init__ or
+  on_simulation_start().  This is cleaner than passing them through return tuples.
+
+═══════════════════════════════════════════════════════════════════════════
+FILES CHANGED
+═══════════════════════════════════════════════════════════════════════════
+
+src/fcpp_bridge/transpiler/python_ast_visitor.py  — guard + OR pattern support
+src/fcpp_bridge/tests/transpiler/test_python_ast_visitor.py — +8 tests
+src/fcpp_bridge/development_history/match_guard_or_pattern.md — NEW
+src/fcpp_bridge/DSL_GUIDE.md — section 6.7 guard/OR docs
+src/bridge.md — updated to v2.0
+src/fcpp_bridge/README.md — v2.0 changelog, test count corrected to 624
+src/fcpp_bridge/examples/abstract_example.py — NEW (Template Method base class)
+src/fcpp_bridge/examples/spreading_collection.py — refactored (prior session)
+src/fcpp_bridge/examples/chain_decaying.py — refactored + double-sim bug fixed
+src/fcpp_bridge/examples/channel_broadcast.py — refactored
+src/fcpp_bridge/examples/collection_compare.py — refactored
+src/fcpp_bridge/examples/message_dispatch.py — refactored
+src/fcpp_bridge/examples/worker_role_assignment.py — refactored
+src/fcpp_bridge/examples/communication_roles_assignment.py — refactored

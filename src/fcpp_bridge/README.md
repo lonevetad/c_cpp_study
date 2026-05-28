@@ -7,7 +7,7 @@ Production-ready bridge between Python and FCPP (Field Calculus C++14 framework)
 ```bash
 cd <repo-root>
 PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -v
-# 616 pass, 0 fail
+# 624 pass, 0 fail
 ```
 
 > **`PYTHONPATH` requirement**: `fcpp_bridge` is not published on PyPI — it lives
@@ -68,8 +68,10 @@ PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/test
 | v1.8.3 | Named constants `ADDITIONAL_REPEATERS_EACH_CYCLE` and `FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS`; `DEVICES` derived; `ROLE_CYCLE` uses unpacking `*([WorkerRole.REPEATER] * N)` | ✅ Done | +0 |
 | v1.8.4 | Transpiler enum constant-folding: `PythonAstVisitor` resolves `IntEnum.X.value` dotted chains to integer literals via `compute.__globals__`; valid C++ `case` labels and comparisons | ✅ Done | +5 |
 | v1.8.5 | Example import fix: `from examples._example_utils` → `from fcpp_bridge.examples._example_utils` in all 6 example files; `PYTHONPATH` requirement documented in README, TUTORIAL_simple, TUTORIAL_in_depth | ✅ Done | +0 |
+| v1.9 | `communication_roles_assignment.py` new example; shared helpers (`neighbors_of`, `build_positions`, `SPAWN_STATUS_*`) added to `_example_utils.py`; all 6 existing examples refactored to use shared `neighbors_of`; `FUTURE_EXERCISES.md` (FE-1 through FE-8) | ✅ Done | +0 |
+| v2.0 | Match guard clauses (`case X if cond:`) + OR patterns (`case A \| B:`) in transpiler; `AbstractExample` base class; all 7 main examples refactored with `AbstractExample`; nodes represented as dynamic dict (join/leave support); `match_guard_or_pattern.md`; `bridge.md` fully updated | ✅ Done | +13 |
 
-**Total: 616 tests — 616 pass, 0 fail.**
+**Total: 624 tests — 624 pass, 0 fail.**
 
 ## Architecture
 
@@ -189,16 +191,19 @@ PYTHONPATH=src python src/fcpp_bridge/examples/end_to_end.py --steps run --nodes
 
 See `TUTORIAL_simple.md §Running individual steps` for the full flag reference.
 
-| Python file               | C++ source                                         | Key FCPP primitives                                                                                |
+All 7 main examples subclass `AbstractExample` (v2.0) — `_demo_simulate()` is replaced by a class that implements `initial_positions`, `initial_states`, `round_step`, `log_header`, `log_line`.  Nodes are managed as `dict[int, state]` so nodes can join or leave dynamically during simulation.
+
+| Python file               | C++ source / origin                                | Key FCPP primitives                                                                                |
 | ------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `spreading_collection.py`    | `fcpp-sample-project/lib/spreading_collection.hpp` | `rectangle_walk`, `abf_distance`, `mp_collection`, `broadcast`                                            |
 | `channel_broadcast.py`       | `fcpp-sample-project/lib/channel_broadcast.hpp`    | `rectangle_walk`, `bis_distance`, `broadcast`                                                             |
 | `collection_compare.py`      | `fcpp-sample-project/lib/collection_compare.hpp`   | `rectangle_walk`, `abf_distance`, `sp_collection`, `mp_collection`, `wmp_collection`, `count_hood`        |
 | `message_dispatch.py`        | `fcpp-sample-project/lib/message_dispatch.hpp`     | `rectangle_walk`, `bis_distance`, `nbr`, `min_hood`, `sp_collection`, `spawn`, `old`                     |
 | `chain_decaying.py`          | `fcpp-sample-project/run/chain_decaying.hpp`       | `nbr`, `min_hood`                                                                                         |
-| `worker_role_assignment.py`  | **original** — v1.5/v1.6/v1.7 DSL showcase        | `bis_distance`, `nbr`, `min_hood`, `count_hood`, `sp_collection`, `spawn`, `old`, `self_uid()` + `match/case` switch + `RoleCommunicationType` |
+| `worker_role_assignment.py`  | **original** — v1.5–v1.9 DSL showcase             | `bis_distance`, `nbr`, `min_hood`, `count_hood`, `sp_collection`, `spawn`, `old`, `self_uid()` + `match/case` + `RoleCommunicationType` |
+| `communication_roles_assignment.py` | **original** — v1.9 DSL showcase           | `bis_distance`×2, `nbr`, `min_hood`, `old`×2, `broadcast`, `self_uid()` + `match/case` + `CommunicationRole` |
 
-See [EXAMPLES_JOURNAL.md](EXAMPLES_JOURNAL.md) for the full algorithm notes, source inventory,
+See [EXAMPLES_JOURNAL.md](development_history/EXAMPLES_JOURNAL.md) for the full algorithm notes, source inventory,
 and resume instructions.
 
 ## Documentation
@@ -244,10 +249,32 @@ and resume instructions.
 - ✅ `SwarmVisualizer` (live matplotlib charts: node count + mean/min/max band)
 - ✅ `create_visualizer` factory (auto-selects best available backend)
 
+- ✅ `PythonAstVisitor`: match guard clauses (`case X if cond:` → `case X: if (cond) { ... } break;`) and OR patterns (`case A | B:` → `case A: case B:` C++14 fallthrough labels)
+- ✅ `AbstractExample` (v2.0): Template Method base class for demo simulations; subclasses override `initial_positions`, `initial_states`, `round_step`, `log_header`, `log_line`, and optional hooks (`on_simulation_start`, `on_simulation_end`, `on_round_complete`); `run(num_rounds)` handles node lifecycle + log file I/O; all 7 main examples subclass it
+
 ## Known Gaps (Future Work)
 
 - Phase 7: Multi-swarm coordination UI
 - Phase 7: Run `generate_antlr.py --download` to activate the ANTLR4 parser path (requires Java 11+)
+
+## v2.0 — Match guard clauses, OR patterns, AbstractExample, and examples refactoring
+
+- **`transpiler/python_ast_visitor.py`** — `visit_Match` extended with two new patterns:
+  - **Guard clauses** (`case X if cond:`): body wrapped in `if (cond) { ... }`; `break` still follows unconditionally so a non-matching guard exits the switch.  Guard expressions must not contain aggregate primitives (CALL-counter rule).
+  - **OR patterns** (`case A | B | C:`): each value emitted as a separate `case X:` label (C++14 fallthrough), sharing one body and one `break`.
+  - **Combined**: `case A | B if cond:` wraps the shared OR body in an `if` block.
+- **`development_history/match_guard_or_pattern.md`** — full feature doc: AST note, generated C++ examples, CALL-counter warning, remaining limitations (sequence / class / capture patterns).
+- **`DSL_GUIDE.md §6.7`** — updated with guard clause and OR pattern syntax, generated C++ examples, expanded limitations table, and summary table new rows.
+- **`examples/abstract_example.py`** — new `AbstractExample(ABC)` base class (Template Method pattern):
+  - Abstract methods: `log_prefix`, `initial_positions()`, `initial_states(positions)`, `round_step(round_num, positions, states)`, `log_header(node_id, state)`, `log_line(round_num, node_id, state)`.
+  - Optional hooks: `on_simulation_start()`, `on_simulation_end()`, `on_round_complete(round_num, positions, states)`.
+  - `run(num_rounds)` — creates log dir, iterates rounds, manages per-node log files, handles nodes that join (new dict key) or leave (key removed), calls hooks.
+  - Nodes represented as `dict[int, state]` throughout: dynamic join/leave is first-class, not an afterthought.
+- **All 7 main examples refactored** — `_demo_simulate()` replaced by a `class XxxExample(AbstractExample)`:
+  `spreading_collection.py`, `channel_broadcast.py`, `collection_compare.py`, `message_dispatch.py`, `chain_decaying.py`, `worker_role_assignment.py`, `communication_roles_assignment.py`.
+  Extra log files (receiver_messages.log, comm_receiver_messages.log) managed via `on_simulation_start / on_simulation_end / on_round_complete`.
+- **`bridge.md`** (root `src/bridge.md`) — fully updated from v0.6/v1.3 to v2.0: new file structure, entries 17–20 in the getting-started checklist, updated test count (624).
+- **8 new transpiler tests**: `test_match_guard_simple`, `test_match_guard_expression`, `test_match_guard_body_indented`, `test_match_guard_default_with_guard`, `test_match_or_pattern_two_values`, `test_match_or_pattern_three_values`, `test_match_or_pattern_body_once`, `test_match_or_pattern_with_enum_folding`.
 
 ## v1.8 — Logging refactor + v1.9 gap-analysis plan
 

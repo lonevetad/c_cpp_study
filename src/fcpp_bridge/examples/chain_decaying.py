@@ -35,24 +35,28 @@ Differences from original C++:
       this port defines them as module constants (see below).
     - Python DSL compute(): nbr is called with a simplified lambda showing
       min_hood; the full update logic (am_I_closest, has_to_increment, decay
-      check) is faithfully implemented in _demo_simulate().
+      check) is faithfully implemented in ChainDecayingExample.round_step().
     - was_on_chain is always True in C++ MAIN (passed as literal true);
       this port omits it since it adds no algorithmic content.
 """
 
 import math
 import random
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 
 from fcpp_bridge.python_dsl import aggregate_function, Neighborhood
-from examples._example_utils import report_validation, report_transpilation
+from fcpp_bridge.examples._example_utils import (
+    neighbors_of,
+    report_validation,
+    report_transpilation,
+)
+from fcpp_bridge.examples.abstract_example import AbstractExample
 
 # ---------------------------------------------------------------------------
 # Simulation constants (deployment parameters — configured externally in C++)
 # ---------------------------------------------------------------------------
 
-NUM_NODES = 30      # swarm size
+NUM_NODES = 30      # initial swarm size (nodes can join/leave dynamically)
 SIDE = 300.0        # deployment area side (square)
 COMM = 80.0         # communication radius
 SPEED = 12.0        # movement speed per round
@@ -62,8 +66,6 @@ INF_INT = 2_147_483_647   # C++: constexpr int inf_int = 2147483647
 ERROR_TTL = -1            # sentinel: node has invalid/error state
 TTL_THRESHOLD = 10        # C++: threshold_TTL_const_ten returns 10
 METRIC_HOP = 1            # C++: metric_unitary_hop returns 1
-
-LOG_DIR = Path(__file__).parent / "logs"
 
 
 # ---------------------------------------------------------------------------
@@ -102,20 +104,6 @@ class ChainDecayingAggregate:
 
     Translated from: fcpp-sample-project/run/chain_decaying.hpp
 
-    The C++ MAIN() calls is_alive_decaying(CALL, is_source, true, inf_int,
-    metric_unitary_hop, threshold_TTL_const_ten).  The function body is a
-    single nbr call with a complex multi-branch update lambda; this Python
-    port inlines that logic.
-
-    Key insight of the algorithm:
-        - nbr shares and receives the 4-tuple (should_hold, hops, ttl, next_uid).
-        - min_hood picks the neighbor tuple with the lowest lexicographic value —
-          which corresponds to the node closest to a chain extremity (source).
-        - Extremity nodes always return (False, 0, 0, uid) — refreshing TTL to 0.
-        - Non-extremity nodes increment their TTL when isolated (am_I_closest) or
-          when their best neighbor says to increment (should_hold=True).
-        - Nodes decay (TTL >= threshold) when they lose all paths to extremities.
-
     Primitive → C++ mapping:
         nbr(...)      → nbr(CALL, ...)      [basics.hpp]
         min_hood(...) → min_hood(CALL, ...) [basics.hpp]
@@ -134,54 +122,17 @@ class ChainDecayingAggregate:
           1. is_source = (node_uid % 17 == 0)
           2. nbr(initial_tuple, update_lambda)  — propagate chain state via min_hood
           3. in_channel = data.ttl > error_ttl
-
-        C++ MAIN():
-            is_source = is_source_node(node.uid);  // uid % 17 == 0
-            in_chan = is_alive_decaying(CALL,
-                is_source, /*was_on_chain=*/true, inf_int,
-                [](node_t&, device_t) -> int { return 1; },      // metric: 1 hop
-                [](node_t&, decaying_node_data<int>) -> int { return 10; }  // TTL threshold
-            );
-
-        C++ is_alive_decaying body (inlined here):
-            data = nbr(CALL,
-                (! is_source, is_source?0:inf_int, is_source?0:-1, node.uid),
-                [&](field<decaying_node_data<int>> d) {
-                    myself = self(d, node.uid);
-                    n      = min_hood(CALL, d);
-                    // ... compute has_to_increment, increment ttl, decay check
-                    return n;
-                });
-            return get<2>(data) > error_ttl;
         """
         # ── Step 1: source determination ──────────────────────────────────────
-        # C++: is_source = is_source_node(node.uid);  // node.uid % 17 == 0
-        # Python: is_source flag is set in state during initialization.
         is_source = self_state.is_source
 
         # ── Step 2: nbr with decaying-chain update lambda ─────────────────────
-        # Initial tuple per node:
-        #   extremity (is_source): (False, 0, 0, self_uid)  — TTL=0, no increment
-        #   interior  (not source): (True, INF_INT, -1, self_uid) — high hops, invalid TTL
-        #
-        # The update lambda (inlined from is_alive_decaying):
-        #   n = min_hood(d)  — pick the neighbor with the best (lowest) chain state
-        #   if extremity: return fresh (False, 0, 0, uid)
-        #   if isolated (n == myself): increment TTL (decay path)
-        #   if has_to_increment: TTL += metric (1 hop)
-        #   if TTL >= threshold (10): return decayed state
-        #   return n with should_hold updated
-        #
-        # NOTE: min_hood is called inside the nbr lambda — both are FCPP primitives
-        # recognized by the transpiler. The Python lambda below is a simplified
-        # representation; the full multi-branch logic lives in _demo_simulate().
         data = nbr(  # noqa: F821
             (not is_source, 0 if is_source else INF_INT, 0 if is_source else ERROR_TTL, 0),
-            lambda d: min_hood(d),  # noqa: F821  — full logic: see _demo_simulate
+            lambda d: min_hood(d),  # noqa: F821  — full logic in ChainDecayingExample
         )
 
         # ── Step 3: liveness check ────────────────────────────────────────────
-        # C++: return get<2>(data) > error_ttl;
         in_channel = data[2] > ERROR_TTL
 
         return ChainDecayingState(
@@ -195,12 +146,62 @@ class ChainDecayingAggregate:
 
 
 # ---------------------------------------------------------------------------
-# Demo simulation
+# Demo simulation — AbstractExample subclass
 # ---------------------------------------------------------------------------
 
-def _demo_simulate() -> None:
+def _is_source_node(uid: int) -> bool:
+    return uid % 17 == 0
+
+
+def _chain_update(
+    nid: int,
+    is_src: bool,
+    nbrs: list,
+    states: dict,
+) -> tuple:
     """
-    Pure-Python faithful implementation of chain_decaying.hpp.
+    Apply the is_alive_decaying update for one node.
+
+    Mirrors the C++ lambda passed to nbr:
+        myself = self(d, node.uid)
+        n      = min_hood(d)           — minimum tuple across self + neighbors
+        if extremity: return (False, 0, 0, uid)
+        am_I_closest = (n == myself)
+        has_to_increment = am_I_closest OR get<0>(n)
+        if has_to_increment: increment hops (if not am_I_closest), increment TTL
+        if TTL >= threshold: return decayed
+        get<0>(n) = (get<1>(n) > 0) AND get<0>(n)
+        return n
+    """
+    if is_src:
+        return (False, 0, 0, nid)
+
+    s = states[nid]
+    myself = (s.should_hold, s.hops, s.ttl, s.next_uid)
+
+    field_values = [myself] + [
+        (states[n].should_hold, states[n].hops, states[n].ttl, states[n].next_uid)
+        for n in nbrs
+    ]
+    n = list(min(field_values))
+
+    am_I_closest = (tuple(n) == myself)
+    has_to_increment = am_I_closest or n[0]
+
+    if has_to_increment:
+        if not am_I_closest:
+            n[1] += 1
+        n[2] += METRIC_HOP
+
+    if n[2] >= TTL_THRESHOLD:
+        return (False, INF_INT, ERROR_TTL, nid)
+
+    n[0] = (n[1] > 0) and n[0]
+    return tuple(n)
+
+
+class ChainDecayingExample(AbstractExample):
+    """Pure-Python faithful implementation of chain_decaying.hpp.
 
     Implements the full is_alive_decaying logic including:
         - min_hood over the 4-tuple field to find the best path to an extremity
@@ -209,129 +210,82 @@ def _demo_simulate() -> None:
         - TTL increment with unitary-hop metric
         - Decay detection (TTL >= threshold)
         - should_hold propagation (only hold if hops > 0)
+
+    Nodes are stored as dict[int, ChainDecayingState]; the initial set is
+    range(NUM_NODES) but nodes may join or leave between rounds.
     """
-    random.seed(31)
 
-    positions = {
-        i: (random.uniform(0.0, SIDE), random.uniform(0.0, SIDE))
-        for i in range(NUM_NODES)
-    }
+    def __init__(self, seed: int = 31):
+        self._rng = random.Random(seed)
+        self._final_states: dict = {}
 
-    def is_source_node(uid: int) -> bool:
-        return uid % 17 == 0
+    @property
+    def log_prefix(self) -> str:
+        return "chain_decaying"
 
-    # Each node's 4-tuple: (should_hold, hops, ttl, next_uid)
-    # Initialize all nodes with their starting values.
-    node_data: dict[int, tuple] = {}
-    for i in range(NUM_NODES):
-        src = is_source_node(i)
-        node_data[i] = (not src, 0 if src else INF_INT, 0 if src else ERROR_TTL, i)
+    def initial_positions(self) -> dict:
+        return {
+            i: (self._rng.uniform(0.0, SIDE), self._rng.uniform(0.0, SIDE))
+            for i in range(NUM_NODES)
+        }
 
-    def neighbors_of(nid: int) -> list[int]:
-        x, y = positions[nid]
-        return [
-            j for j in range(NUM_NODES)
-            if j != nid
-            and math.dist((x, y), positions[j]) <= COMM
-        ]
+    def initial_states(self, positions: dict) -> dict:
+        result = {}
+        for nid in positions:
+            is_src = _is_source_node(nid)
+            result[nid] = ChainDecayingState(
+                is_source=is_src,
+                in_channel=is_src,
+                should_hold=not is_src,
+                hops=0 if is_src else INF_INT,
+                ttl=0 if is_src else ERROR_TTL,
+                next_uid=nid,
+            )
+        return result
 
-    def _chain_update(
-        nid: int,
-        is_src: bool,
-        nbrs: list[int],
-        node_data: dict[int, tuple],
-    ) -> tuple:
-        """
-        Applies the is_alive_decaying update lambda for one node.
+    def round_step(self, round_num: int, positions: dict, states: dict) -> tuple:
+        new_positions = {}
+        new_states = {}
 
-        Mirrors the C++ lambda passed to nbr:
-            myself = self(d, node.uid)
-            n      = min_hood(d)           — minimum tuple across self + neighbors
-            if extremity: return (False, 0, 0, uid)
-            am_I_closest = (n == myself)
-            has_to_increment = am_I_closest OR get<0>(n)
-            if has_to_increment: increment hops (if not am_I_closest), increment TTL
-            if TTL >= threshold: return decayed
-            get<0>(n) = (get<1>(n) > 0) AND get<0>(n)
-            return n
-        """
-        if is_src:
-            # Extremity always refreshes the chain
-            return (False, 0, 0, nid)
-
-        myself = node_data[nid]
-
-        # Field d = self + current neighbors (FCPP nbr field includes self)
-        field_values = [myself] + [node_data[n] for n in nbrs]
-        n = list(min(field_values))   # min uses lexicographic tuple comparison
-
-        am_I_closest = (tuple(n) == myself)
-        has_to_increment = am_I_closest or n[0]   # isolated OR neighbor says increment
-
-        if has_to_increment:
-            if not am_I_closest:
-                n[1] += 1   # increment hops count (we're using a neighbor's data)
-            n[2] += METRIC_HOP  # increment TTL by 1 (unitary hop metric)
-
-        if n[2] >= TTL_THRESHOLD:
-            # Decayed: node leaves the chain
-            return (False, INF_INT, ERROR_TTL, nid)
-
-        # Propagate should_hold: suppress increment if close enough to extremity (hops=0)
-        n[0] = (n[1] > 0) and n[0]
-
-        return tuple(n)
-
-    LOG_DIR.mkdir(exist_ok=True)
-    log_files = {}
-
-    for round_num in range(NUM_ROUNDS):
-        new_data = {}
-
-        for nid in range(NUM_NODES):
-            # Step 1: rectangle_walk
-            x, y = positions[nid]
-            positions[nid] = (
-                max(0.0, min(SIDE, x + random.uniform(-SPEED, SPEED))),
-                max(0.0, min(SIDE, y + random.uniform(-SPEED, SPEED))),
+        for nid, (x, y) in positions.items():
+            new_positions[nid] = (
+                max(0.0, min(SIDE, x + self._rng.uniform(-SPEED, SPEED))),
+                max(0.0, min(SIDE, y + self._rng.uniform(-SPEED, SPEED))),
             )
 
-            # Step 2: nbr + min_hood (is_alive_decaying core)
-            nbrs = neighbors_of(nid)
-            is_src = is_source_node(nid)
-            new_data[nid] = _chain_update(nid, is_src, nbrs, node_data)
-
-        node_data = new_data
-
-        # Step 3: derive in_channel and write log
-        for nid in range(NUM_NODES):
-            d = node_data[nid]
-            is_src = is_source_node(nid)
+        for nid in positions:
+            nbrs = neighbors_of(positions, nid, COMM)
+            is_src = _is_source_node(nid)
+            d = _chain_update(nid, is_src, nbrs, states)
             in_chan = d[2] > ERROR_TTL
-
-            if nid not in log_files:
-                log_path = LOG_DIR / f"node_{nid}_chain_decaying.log"
-                lf = open(log_path, "w")
-                lf.write(
-                    f"# ChainDecaying — node {nid}  (is_source={is_src})\n"
-                    "# round,is_source,in_channel,should_hold,hops,ttl,next_uid\n"
-                )
-                log_files[nid] = lf
-
-            log_files[nid].write(
-                f"{round_num},{int(is_src)},{int(in_chan)},"
-                f"{int(d[0])},{d[1]},{d[2]},{d[3]}\n"
+            new_states[nid] = ChainDecayingState(
+                is_source=is_src,
+                in_channel=in_chan,
+                should_hold=d[0],
+                hops=d[1],
+                ttl=d[2],
+                next_uid=d[3],
             )
 
-    for lf in log_files.values():
-        lf.close()
+        return new_positions, new_states
 
-    src_nodes = [i for i in range(NUM_NODES) if is_source_node(i)]
-    alive_nodes = [i for i in range(NUM_NODES) if node_data[i][2] > ERROR_TTL]
-    print(f"    Wrote {NUM_NODES} log files → {LOG_DIR}/")
-    print(f"    Source (extremity) nodes: {src_nodes}")
-    print(f"    Nodes in chain after {NUM_ROUNDS} rounds: "
-          f"{len(alive_nodes)}/{NUM_NODES} → {alive_nodes}")
+    def log_header(self, node_id: int, state) -> str:
+        return (
+            f"# ChainDecaying — node {node_id}  (is_source={state.is_source})\n"
+            "# round,is_source,in_channel,should_hold,hops,ttl,next_uid\n"
+        )
+
+    def log_line(self, round_num: int, node_id: int, state) -> str:
+        return (
+            f"{round_num},{int(state.is_source)},{int(state.in_channel)},"
+            f"{int(state.should_hold)},{state.hops},{state.ttl},{state.next_uid}\n"
+        )
+
+    def on_round_complete(self, round_num: int, positions: dict, states: dict) -> None:
+        self._final_states = states
+
+    def on_simulation_end(self) -> None:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +311,17 @@ def main() -> None:
     print("\n[3/3] Running demo simulation and writing per-node logs...")
     print(f"    Nodes: {NUM_NODES}  |  Rounds: {NUM_ROUNDS}  |  COMM: {COMM}")
     print(f"    Source criterion: uid % 17 == 0  |  TTL threshold: {TTL_THRESHOLD}")
-    _demo_simulate()
+
+    example = ChainDecayingExample()
+    example.run(NUM_ROUNDS)
+
+    states = example._final_states
+    src_nodes = sorted(nid for nid, s in states.items() if s.is_source)
+    alive_nodes = sorted(nid for nid, s in states.items() if s.in_channel)
+    print(f"    Wrote {NUM_NODES} log files → {example.log_dir}/")
+    print(f"    Source (extremity) nodes: {src_nodes}")
+    print(f"    Nodes in chain after {NUM_ROUNDS} rounds: "
+          f"{len(alive_nodes)}/{NUM_NODES} → {alive_nodes}")
 
     print("\nAlgorithm summary:")
     print("  Chain extremity nodes: uid % 17 == 0 — continuously refresh TTL to 0.")

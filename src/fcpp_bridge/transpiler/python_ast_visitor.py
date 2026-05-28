@@ -11,11 +11,16 @@ _log = get_logger(__name__)
 class PythonAstVisitor(ast.NodeVisitor):
     """Visit Python AST nodes and translate to C++ expressions and statements."""
 
-    def __init__(self):
+    def __init__(self, constants: dict = None):
         self.variables: Dict[str, CppType] = {}
         self.errors: List[str] = []
         self.used_primitives: List[str] = []
         self.declared_vars: Set[str] = set()
+        # Optional namespace for constant-folding dotted attribute chains.
+        # When provided (typically the compute() function's __globals__), any
+        # dotted name that resolves to an int/float is emitted as a literal,
+        # which is required for valid C++ case labels (e.g. WorkerRole.X.value).
+        self.constants: dict = constants if constants is not None else {}
 
     def visit_BinOp(self, node: ast.BinOp) -> str:
         """Translate binary operations: +, -, *, /, etc."""
@@ -128,8 +133,53 @@ class PythonAstVisitor(ast.NodeVisitor):
         """Translate variable names."""
         return node.id
 
+    def _resolve_dotted_chain(self, node: ast.Attribute):
+        """Walk an Attribute chain and resolve it against self.constants.
+
+        Returns the resolved Python value if the full chain resolves, else None.
+        Only the root name is looked up in self.constants; subsequent attrs are
+        resolved via getattr().  Useful for folding IntEnum member values to
+        integer literals so that C++ case labels remain compile-time constants.
+        """
+        parts = []
+        current = node
+        while isinstance(current, ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
+        if not isinstance(current, ast.Name):
+            return None
+        parts.append(current.id)
+        parts.reverse()  # [root, attr1, attr2, ...]
+
+        root = parts[0]
+        if root not in self.constants:
+            return None
+        obj = self.constants[root]
+        try:
+            for attr in parts[1:]:
+                obj = getattr(obj, attr)
+        except AttributeError:
+            return None
+        return obj
+
     def visit_Attribute(self, node: ast.Attribute) -> str:
-        """Translate attribute access: obj.attr."""
+        """Translate attribute access: obj.attr.
+
+        When a constants dict is available, attempts to resolve the full dotted
+        chain (e.g. ``WorkerRole.RECEIVER.value``) to its numeric literal value.
+        This is required for C++ case labels, which must be compile-time constants.
+        bool is mapped to 1/0 rather than true/false to preserve integer type.
+        """
+        if self.constants:
+            resolved = self._resolve_dotted_chain(node)
+            if resolved is True:
+                return "1"
+            elif resolved is False:
+                return "0"
+            elif isinstance(resolved, int):
+                return str(resolved)
+            elif isinstance(resolved, float):
+                return str(resolved)
         obj = self.visit(node.value)
         return f"{obj}.{node.attr}"
 
@@ -288,12 +338,30 @@ class PythonAstVisitor(ast.NodeVisitor):
         return ""
 
     def visit_Match(self, node: ast.Match) -> str:
-        """Translate Python `match/case` (3.10+) → C++ `switch`."""
+        """Translate Python ``match/case`` (3.10+) → C++ ``switch``.
+
+        Supported patterns:
+        - ``case X:``          — value pattern → ``case X:``
+        - ``case _:``          — wildcard     → ``default:``
+        - ``case X | Y:``      — OR pattern   → ``case X: case Y:`` (C++ fallthrough labels)
+        - ``case X if cond:``  — guard clause → ``case X: if (cond) { ... }``
+
+        Guard clauses wrap the case body in an ``if`` block; the ``break`` still
+        follows so unmatched guards fall out of the switch rather than falling
+        through.  This mirrors C++17 ``[[fallthrough]]`` avoidance and keeps
+        the generated code compatible with C++14.
+        """
         subject = self.visit(node.subject)
         cases_cpp: List[str] = []
         for case in node.cases:
             body = self.transpile_statements(case.body)
             pattern = case.pattern
+
+            # Guard clause: `case X if cond:` → wrap body in `if (cond) { ... }`
+            if case.guard is not None:
+                guard_cpp = self.visit(case.guard)
+                body = f"if ({guard_cpp}) {{\n{body}\n    }}"
+
             if (
                 isinstance(pattern, ast.MatchAs)
                 and pattern.name is None
@@ -304,6 +372,20 @@ class PythonAstVisitor(ast.NodeVisitor):
             elif isinstance(pattern, ast.MatchValue):
                 val = self.visit(pattern.value)
                 cases_cpp.append(f"case {val}:\n{body}\n    break;")
+            elif isinstance(pattern, ast.MatchOr):
+                # OR pattern `case A | B | C:` → `case A: case B: case C:` (shared body)
+                labels: List[str] = []
+                for sub in pattern.patterns:
+                    if isinstance(sub, ast.MatchValue):
+                        labels.append(f"case {self.visit(sub.value)}:")
+                    else:
+                        self.errors.append(
+                            f"Unsupported OR sub-pattern: {type(sub).__name__}"
+                        )
+                if labels:
+                    cases_cpp.append(
+                        "\n".join(labels) + f"\n{body}\n    break;"
+                    )
             else:
                 self.errors.append(
                     f"Unsupported match pattern: {type(pattern).__name__}"

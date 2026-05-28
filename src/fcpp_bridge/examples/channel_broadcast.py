@@ -29,16 +29,14 @@ Differences from original C++:
 import math
 import random
 from dataclasses import dataclass
-from pathlib import Path
 
 from fcpp_bridge.python_dsl import aggregate_function, Neighborhood
-from examples._example_utils import report_validation, report_transpilation
-
-try:
-    from fcpp_bridge.transpiler import Transpiler
-    _PIPELINE_AVAILABLE = True
-except ImportError:
-    _PIPELINE_AVAILABLE = False
+from fcpp_bridge.examples._example_utils import (
+    neighbors_of,
+    report_validation,
+    report_transpilation,
+)
+from fcpp_bridge.examples.abstract_example import AbstractExample
 
 # ---------------------------------------------------------------------------
 # Simulation constants (matching channel_broadcast.hpp)
@@ -52,8 +50,6 @@ HEIGHT = 100        # deployment area height
 CHANNEL_WIDTH = 20  # ellipse half-width
 SPEED = 10          # movement speed per round
 NUM_ROUNDS = 25     # simulation rounds
-
-LOG_DIR = Path(__file__).parent / "logs"
 
 
 # ---------------------------------------------------------------------------
@@ -169,67 +165,67 @@ class ChannelBroadcastAggregate:
 
 
 # ---------------------------------------------------------------------------
-# Demo simulation
+# Demo simulation — AbstractExample subclass
 # ---------------------------------------------------------------------------
 
-def _demo_simulate() -> None:
+def _bis_distance(is_endpoint: bool, nbr_dists: list) -> float:
+    """Approximate BIS distance: like ABF but with smoother convergence."""
+    if is_endpoint:
+        return 0.0
+    if not nbr_dists:
+        return math.inf
+    return min(nbr_dists) + COMM * 0.1
+
+
+class ChannelBroadcastExample(AbstractExample):
+    """Pure-Python faithful implementation of channel_broadcast.hpp.
+
+    Implements the same 5 steps as compute() using Python logic so that
+    per-node log files can be produced without a C++ compiler.
+
+    Nodes are stored as dict[int, ChannelState]; the initial set is
+    range(DEVICES) but nodes may join or leave between rounds.
     """
-    Pure-Python approximation of the channel-broadcast algorithm.
 
-    Implements the same 5 steps as compute() for log generation without a
-    C++ compiler.
-    """
-    random.seed(7)
+    def __init__(self, seed: int = 7):
+        self._rng = random.Random(seed)
+        self._final_states: dict = {}
 
-    positions = {
-        i: (random.uniform(0.0, SIDE), random.uniform(0.0, SIDE))
-        for i in range(DEVICES)
-    }
+    @property
+    def log_prefix(self) -> str:
+        return "channel_broadcast"
 
-    states = {
-        i: ChannelState(is_source=(i == 0), is_dest=(i == 1))
-        for i in range(DEVICES)
-    }
+    def initial_positions(self) -> dict:
+        return {
+            i: (self._rng.uniform(0.0, SIDE), self._rng.uniform(0.0, SIDE))
+            for i in range(DEVICES)
+        }
 
-    def neighbors_of(nid):
-        x, y = positions[nid]
-        return [
-            j for j in range(DEVICES)
-            if j != nid
-            and math.dist((x, y), positions[j]) <= COMM
-        ]
+    def initial_states(self, positions: dict) -> dict:
+        return {
+            nid: ChannelState(is_source=(nid == 0), is_dest=(nid == 1))
+            for nid in positions
+        }
 
-    def _bis_distance(is_endpoint, nbr_dists):
-        """Approximate BIS distance: like ABF but with smoother convergence."""
-        if is_endpoint:
-            return 0.0
-        if not nbr_dists:
-            return math.inf
-        return min(nbr_dists) + COMM * 0.1   # simplified unit cost
-
-    LOG_DIR.mkdir(exist_ok=True)
-    log_files = {}
-
-    for round_num in range(NUM_ROUNDS):
+    def round_step(self, round_num: int, positions: dict, states: dict) -> tuple:
+        new_positions = {}
         new_states = {}
 
-        for nid in range(DEVICES):
-            s = states[nid]
-            nbrs = neighbors_of(nid)
-            nbr_s = [states[n] for n in nbrs]
-
-            # Step 1: rectangle_walk
-            x, y = positions[nid]
-            positions[nid] = (
-                max(0.0, min(SIDE, x + random.uniform(-SPEED, SPEED))),
-                max(0.0, min(SIDE, y + random.uniform(-SPEED, SPEED))),
+        for nid, (x, y) in positions.items():
+            new_positions[nid] = (
+                max(0.0, min(SIDE, x + self._rng.uniform(-SPEED, SPEED))),
+                max(0.0, min(SIDE, y + self._rng.uniform(-SPEED, SPEED))),
             )
+
+        for nid in positions:
+            s = states[nid]
+            nbrs = neighbors_of(positions, nid, COMM)
+            nbr_s = [states[n] for n in nbrs]
 
             # Step 2: BIS distance to source
             ds = _bis_distance(
                 s.is_source,
-                [ns.source_dist for ns in nbr_s if math.isfinite(
-                    ns.source_dist)],
+                [ns.source_dist for ns in nbr_s if math.isfinite(ns.source_dist)],
             )
 
             # Step 3: BIS distance to destination
@@ -250,7 +246,7 @@ def _demo_simulate() -> None:
                 if parents:
                     span = min(parents, key=lambda t: t[0])[1]
                 else:
-                    span = s.source_dist + s.dest_dist   # fallback
+                    span = s.source_dist + s.dest_dist
 
             # Step 5: channel check
             in_channel = (
@@ -267,29 +263,28 @@ def _demo_simulate() -> None:
                 in_channel=in_channel,
             )
 
-            # Write log entry
-            if nid not in log_files:
-                log_path = LOG_DIR / f"node_{nid}_channel_broadcast.log"
-                lf = open(log_path, "w")
-                lf.write(
-                    f"# ChannelBroadcast — node {nid}\n"
-                    "# round,is_source,is_dest,source_dist,dest_dist,in_channel\n"
-                )
-                log_files[nid] = lf
-            log_files[nid].write(
-                f"{round_num},{int(s.is_source)},{int(s.is_dest)},"
-                f"{ds:.4f},{dd:.4f},{int(in_channel)}\n"
-            )
+        return new_positions, new_states
 
-        states = new_states
+    def log_header(self, node_id: int, state) -> str:
+        return (
+            f"# ChannelBroadcast — node {node_id}\n"
+            "# round,is_source,is_dest,source_dist,dest_dist,in_channel\n"
+        )
 
-    for lf in log_files.values():
-        lf.close()
+    def log_line(self, round_num: int, node_id: int, state) -> str:
+        return (
+            f"{round_num},{int(state.is_source)},{int(state.is_dest)},"
+            f"{state.source_dist:.4f},{state.dest_dist:.4f},{int(state.in_channel)}\n"
+        )
 
-    in_channel_count = sum(1 for s in states.values() if s.in_channel)
-    print(f"    Wrote {DEVICES} log files → {LOG_DIR}/")
-    print(
-        f"    Last round: {in_channel_count}/{DEVICES} nodes inside the channel")
+    def on_round_complete(self, round_num: int, positions: dict, states: dict) -> None:
+        self._final_states = states
+
+    def on_simulation_end(self) -> None:
+        states = self._final_states
+        in_channel_count = sum(1 for s in states.values() if s.in_channel)
+        print(f"    Wrote {DEVICES} log files → {self.log_dir}/")
+        print(f"    Last round: {in_channel_count}/{DEVICES} nodes inside the channel")
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +311,7 @@ def main() -> None:
     print(f"    Nodes: {DEVICES}  |  Rounds: {NUM_ROUNDS}")
     print(
         f"    Source: node 0  |  Destination: node 1  |  Channel width: {CHANNEL_WIDTH}")
-    _demo_simulate()
+    ChannelBroadcastExample().run(NUM_ROUNDS)
 
     print("\nAlgorithm summary:")
     print("  1. rectangle_walk  — random 3D movement")

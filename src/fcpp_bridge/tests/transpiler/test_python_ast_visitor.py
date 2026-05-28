@@ -4,7 +4,15 @@ import ast
 import inspect
 import textwrap
 import pytest
+from enum import IntEnum
 from fcpp_bridge.transpiler import PythonAstVisitor, _FCPP_PRIMITIVES
+
+
+# Module-level test enum used by constant-folding tests.
+class _TestRole(IntEnum):
+    UNASSIGNED = 0
+    RECEIVER = 1
+    SENSOR = 2
 
 
 def _v(expr_str: str) -> str:
@@ -40,6 +48,23 @@ def _body(fn) -> str:
     ):
         stmts = stmts[1:]
     v = PythonAstVisitor()
+    return v.transpile_statements(stmts)
+
+
+def _body_with_consts(fn, constants: dict) -> str:
+    """Transpile the full body of fn using a PythonAstVisitor with constants."""
+    source = textwrap.dedent(inspect.getsource(fn))
+    tree = ast.parse(source)
+    func_def = tree.body[0]
+    stmts = func_def.body
+    if (
+        stmts
+        and isinstance(stmts[0], ast.Expr)
+        and isinstance(stmts[0].value, ast.Constant)
+        and isinstance(stmts[0].value.value, str)
+    ):
+        stmts = stmts[1:]
+    v = PythonAstVisitor(constants=constants)
     return v.transpile_statements(stmts)
 
 
@@ -718,3 +743,174 @@ def test_transpile_indentation():
     # inner return is indented 8 spaces
     inner = [l for l in lines if "return 1" in l][0]
     assert inner.startswith("        ")
+
+
+# ============================================================================
+# Constant-folding: IntEnum / dotted-attribute chains
+# ============================================================================
+
+
+def test_enum_value_attribute_folds_to_integer():
+    """WorkerRole.RECEIVER.value → "1" when constants dict is supplied."""
+    v = PythonAstVisitor(constants={"_TestRole": _TestRole})
+    node = ast.parse("_TestRole.RECEIVER.value").body[0].value
+    assert v.visit(node) == "1"
+
+
+def test_enum_member_folds_to_integer():
+    """IntEnum member without .value also folds (IntEnum IS an int)."""
+    v = PythonAstVisitor(constants={"_TestRole": _TestRole})
+    node = ast.parse("_TestRole.SENSOR").body[0].value
+    assert v.visit(node) == "2"
+
+
+def test_attribute_no_fold_when_constants_empty():
+    """Without a constants dict the dotted chain is emitted verbatim."""
+    v = PythonAstVisitor()
+    node = ast.parse("_TestRole.RECEIVER.value").body[0].value
+    assert v.visit(node) == "_TestRole.RECEIVER.value"
+
+
+def test_enum_value_in_compare_folds():
+    """role == _TestRole.RECEIVER.value → (role == 1)."""
+    v = PythonAstVisitor(constants={"_TestRole": _TestRole})
+    node = ast.parse("role == _TestRole.RECEIVER.value").body[0].value
+    assert v.visit(node) == "(role == 1)"
+
+
+def test_enum_value_in_match_case_folds():
+    """match/case with enum .value patterns emits integer case labels."""
+    def fn():
+        match mode:  # noqa: F821
+            case _TestRole.UNASSIGNED.value:
+                x = 0  # noqa: F821
+            case _TestRole.RECEIVER.value:
+                x = 1  # noqa: F821
+            case _:
+                x = 99  # noqa: F821
+    result = _body_with_consts(fn, {"_TestRole": _TestRole})
+    assert "switch (mode)" in result
+    assert "case 0:" in result
+    assert "case 1:" in result
+    assert "default:" in result
+    assert "_TestRole" not in result
+
+
+# ============================================================================
+# v2.0: match guard clauses — `case X if cond:` → `case X: if (cond) { ... }`
+# ============================================================================
+
+
+def test_match_guard_simple():
+    """case X if cond: → case X: if (cond) { body } break;"""
+    def fn():
+        match mode:  # noqa: F821
+            case 1 if active:  # noqa: F821
+                x = 10  # noqa: F821
+            case 2:
+                x = 20  # noqa: F821
+            case _:
+                x = 0  # noqa: F821
+    result = _body(fn)
+    assert "switch (" in result
+    assert "case 1:" in result
+    assert "if (active)" in result
+    assert "case 2:" in result
+    assert "default:" in result
+
+
+def test_match_guard_expression():
+    """Guard expressions with comparisons are emitted correctly."""
+    def fn():
+        match value:  # noqa: F821
+            case 0 if dist < threshold:  # noqa: F821
+                result = 1  # noqa: F821
+            case _:
+                result = 0  # noqa: F821
+    result = _body(fn)
+    assert "case 0:" in result
+    assert "if ((dist < threshold))" in result
+
+
+def test_match_guard_body_indented():
+    """Guard body is nested inside the if block."""
+    def fn():
+        match status:  # noqa: F821
+            case 1 if enabled:  # noqa: F821
+                y = 42  # noqa: F821
+    result = _body(fn)
+    # body must appear inside the if block, before the break
+    guard_pos = result.index("if (enabled)")
+    body_pos = result.index("y = 42", guard_pos)
+    break_pos = result.index("break;", guard_pos)
+    assert guard_pos < body_pos < break_pos
+
+
+def test_match_guard_default_with_guard():
+    """default: with guard works (wraps body in if block)."""
+    def fn():
+        match x:  # noqa: F821
+            case 1:
+                a = 1  # noqa: F821
+            case _ if fallback:  # noqa: F821
+                a = 0  # noqa: F821
+    result = _body(fn)
+    assert "default:" in result
+    assert "if (fallback)" in result
+
+
+# ============================================================================
+# v2.0: OR patterns — `case A | B:` → `case A: case B:` (C++ fallthrough labels)
+# ============================================================================
+
+
+def test_match_or_pattern_two_values():
+    """case A | B: → case A: case B: with shared body."""
+    def fn():
+        match mode:  # noqa: F821
+            case 1 | 2:
+                x = 10  # noqa: F821
+            case _:
+                x = 0  # noqa: F821
+    result = _body(fn)
+    assert "case 1:" in result
+    assert "case 2:" in result
+    assert result.count("break;") >= 1
+
+
+def test_match_or_pattern_three_values():
+    """case A | B | C: → three case labels sharing the same body."""
+    def fn():
+        match role:  # noqa: F821
+            case 1 | 2 | 3:
+                active = True  # noqa: F821
+            case _:
+                active = False  # noqa: F821
+    result = _body(fn)
+    assert "case 1:" in result
+    assert "case 2:" in result
+    assert "case 3:" in result
+
+
+def test_match_or_pattern_body_once():
+    """The shared body appears only once, not once per label."""
+    def fn():
+        match mode:  # noqa: F821
+            case 0 | 1:
+                val = 99  # noqa: F821
+    result = _body(fn)
+    assert result.count("val = 99") == 1
+
+
+def test_match_or_pattern_with_enum_folding():
+    """OR patterns with enum folding emit integer case labels."""
+    def fn():
+        match role:  # noqa: F821
+            case _TestRole.UNASSIGNED.value | _TestRole.RECEIVER.value:
+                ok = True  # noqa: F821
+            case _:
+                ok = False  # noqa: F821
+    result = _body_with_consts(fn, {"_TestRole": _TestRole})
+    assert "case 0:" in result
+    assert "case 1:" in result
+    assert "_TestRole" not in result

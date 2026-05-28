@@ -196,6 +196,57 @@ Per-node log files are written to `src/fcpp_bridge/examples/logs/`.
 
 ---
 
+## v2.0 — AbstractExample refactor (2026-05-28)
+
+All 7 example files refactored to replace `_demo_simulate()` with a proper
+`AbstractExample` subclass (Template Method pattern).
+
+### New base class: `examples/abstract_example.py`
+
+`AbstractExample` provides:
+- `run(num_rounds)` — simulation loop with log-file lifecycle management
+- Abstract: `log_prefix`, `initial_positions()`, `initial_states()`, `round_step()`,
+  `log_header()`, `log_line()`
+- Optional hooks: `on_simulation_start()`, `on_simulation_end()`, `on_round_complete()`
+- Log files opened on first appearance of a node; closed when node leaves `states` dict
+- `log_dir` property defaults to `examples/logs/` (overridable per-subclass)
+
+### Dynamic node dict
+
+`positions: dict[int, tuple]` and `states: dict[int, state]` — node presence determined
+by dict keys only.  Nodes join by inserting new keys into the returned dict; they leave
+by omitting their key from the returned dict.  `AbstractExample.run()` opens/closes
+per-node log files as keys appear/disappear.
+
+### Per-example changes
+
+| Example | Subclass name | Extra log(s) | Cross-round state |
+|---|---|---|---|
+| `spreading_collection.py` | `SpreadingCollectionExample` | — | — |
+| `chain_decaying.py` | `ChainDecayingExample` | — | `_final_states` (double-sim bug fixed) |
+| `channel_broadcast.py` | `ChannelBroadcastExample` | — | `_final_states` |
+| `collection_compare.py` | `CollectionCompareExample` | — | `_final_states` |
+| `message_dispatch.py` | `MessageDispatchExample` | — | `_in_flight`, `_total_received` |
+| `worker_role_assignment.py` | `WorkerRoleExample` | `receiver_messages.log` | `_in_flight`, `_total_delivered`, `_recv_log` |
+| `communication_roles_assignment.py` | `CommunicationRolesExample` | `comm_receiver_messages.log` | all per-round distance dicts; `_recv_log` |
+
+`CommunicationRolesExample.__init__` calls `_setup_network()` to pre-compute positions
+and roles.  `initial_positions()` / `initial_states()` return the pre-computed results.
+Positions are static (no movement) — `round_step` returns the same positions dict.
+
+### Bug fixed in chain_decaying.py
+
+`main()` previously re-ran the entire simulation after `example.run()` to get final
+states for summary printing (double execution).  Fixed: `on_round_complete` hook now
+stores `self._final_states = states` each round; `main()` reads `example._final_states`.
+
+### Tests
+
++8 new transpiler tests for match guard clause and OR patterns (see `match_guard_or_pattern.md`).
+Total: 624 tests — 624 pass, 0 fail.
+
+---
+
 ## Resume instructions
 
 If interrupted, check the **Status** table above. Find the first ⬜ Pending row and

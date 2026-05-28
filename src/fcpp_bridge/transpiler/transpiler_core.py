@@ -116,7 +116,10 @@ class Transpiler:
         ):
             stmts = stmts[1:]
 
-        visitor = PythonAstVisitor()
+        # Pass the function's globals so constant chains (e.g. IntEnum .value
+        # references) can be folded to integer literals in C++ case labels.
+        fn_globals = getattr(method, "__globals__", {})
+        visitor = PythonAstVisitor(constants=fn_globals)
         cpp_body = visitor.transpile_statements(stmts)
 
         for py_name, cpp_name in param_remap.items():

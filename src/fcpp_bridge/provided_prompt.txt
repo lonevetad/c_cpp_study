@@ -364,3 +364,12 @@ Lastly, write/update relevant ".md" files and save your memory and the session.
 
 
 
+
+Why the example have both a a class tagged with the "aggregate_function" decorator and a class inheriting "AbstractExample"? Shouldn't they be the same?
+
+
+All of the examples under "examples" folder are meant for developers who want to have some inspiration to start designing their own algoritms, so having the simulation completely re-writing the aggregate program in pure Python (i.e., without any FCPP primitive) kind of defeats the whole purpose of this whole project.
+Update the already existing "1.9 plan" by merging the already present steps with the examples refactoring, such that running a Python source file under the "examples" directory actually calls the whole toolchain and sets up the network's updates and the individual node's updates to be consumed as logs in local file(s) (which is one of the possible ways to consume the updates I mentioned in previous refactorings). Use the "abstract_example.py" source file as a starting point of the exercises refactoring.
+Reorder the resulting "1.9 plan" steps to optimize the overall refactoring, by eventually merging or splitting the steps.
+Note: every step must also update all related ".md" files, even write new ones if necessary, and save both Your (ClaudeCode) memory and session data, to allow the session to be preciselu resumed if interrupted. 
+

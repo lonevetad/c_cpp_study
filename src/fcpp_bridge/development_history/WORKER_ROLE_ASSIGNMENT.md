@@ -270,10 +270,9 @@ so Python evaluates `WorkerRole.RECEIVER.value` to the integer `1` and matches
 against it.  This is the approach used in the example: no magic integer literals,
 and the enum class itself is the source of truth.
 
-> **Transpiler caveat:** The AST visitor currently expects integer literal
-> constants in `case` labels; `WorkerRole.X.value` produces an `Attribute` chain
-> in the AST that would require constant-folding to resolve.  The Python simulation
-> runs correctly; C++ generation of the switch body is a planned improvement.
+> **Transpiler support (v1.8.4):** The AST visitor resolves `WorkerRole.X.value`
+> chains to integer literals by constant-folding them against the compute function's
+> `__globals__`.  Both `case` labels and comparison guards now generate valid C++.
 
 ### Role assignment via ROLE_CYCLE (v1.8.1)
 
@@ -499,6 +498,16 @@ network coverage and routing health.
 | ---- | ------ |
 | `examples/worker_role_assignment.py` | Extracted `ADDITIONAL_REPEATERS_EACH_CYCLE = 5` and `FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS = 2`; `ROLE_CYCLE` uses `*([WorkerRole.REPEATER] * ADDITIONAL_REPEATERS_EACH_CYCLE)`; `DEVICES` derived as `len(ROLE_CYCLE) * FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS` |
 | `development_history/WORKER_ROLE_ASSIGNMENT.md` | Scenario section rewritten with constant formulas; design decision section updated; case label examples updated |
+
+### v1.8.4 (enum constant-folding in transpiler)
+
+| File | Change |
+| ---- | ------ |
+| `transpiler/python_ast_visitor.py` | `PythonAstVisitor.__init__` accepts optional `constants` dict; new `_resolve_dotted_chain()` helper; `visit_Attribute` constant-folds int/float resolutions to literals |
+| `transpiler/transpiler_core.py` | `_transpile_method_body` passes `method.__globals__` as `constants` to the visitor |
+| `tests/transpiler/test_python_ast_visitor.py` | 5 new tests: attribute fold, member fold, no-fold fallback, compare fold, match/case fold |
+| `DSL_GUIDE.md` | §6.7 and §9 updated; `match/case` enum limitation removed |
+| `development_history/WORKER_ROLE_ASSIGNMENT.md` | Transpiler caveat replaced with "fixed in v1.8.4" note |
 
 ### v1.9 (planned — receiver UID fix + transpiler improvements)
 

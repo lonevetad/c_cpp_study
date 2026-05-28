@@ -75,10 +75,17 @@ import math
 import random
 from dataclasses import dataclass
 from enum import IntEnum
-from pathlib import Path
 
 from fcpp_bridge.python_dsl import aggregate_function, Neighborhood
-from examples._example_utils import report_validation, report_transpilation
+from fcpp_bridge.examples._example_utils import (
+    neighbors_of,
+    SPAWN_STATUS_BORDER,
+    SPAWN_STATUS_INTERNAL,
+    SPAWN_STATUS_TERMINATED,
+    report_validation,
+    report_transpilation,
+)
+from fcpp_bridge.examples.abstract_example import AbstractExample
 
 
 # ---------------------------------------------------------------------------
@@ -157,14 +164,11 @@ SPEED = 8
 NUM_ROUNDS = 50
 MSG_INTERVAL = 10        # endpoints emit a new message every MSG_INTERVAL rounds
 
-LOG_DIR = Path(__file__).parent / "logs"
-
-# Spawn process status codes — same convention as message_dispatch.py
-# Must match C++ fcpp::status enum values exactly:
-STATUS_BORDER = 0   # 0 — fcpp::status::border     (node is off routing path)
-STATUS_INTERNAL = 1   # 1 — fcpp::status::internal   (node is actively routing)
-# 2 — fcpp::status::terminated_output (message reached destination)
-STATUS_TERMINATED = 2
+# Spawn process status codes — aliases of shared SPAWN_STATUS_* from _example_utils.
+# Must match C++ fcpp::status enum values exactly.
+STATUS_BORDER = SPAWN_STATUS_BORDER        # 0 — fcpp::status::border
+STATUS_INTERNAL = SPAWN_STATUS_INTERNAL    # 1 — fcpp::status::internal
+STATUS_TERMINATED = SPAWN_STATUS_TERMINATED  # 2 — fcpp::status::terminated_output
 
 
 # ---------------------------------------------------------------------------
@@ -423,117 +427,122 @@ class WorkerRoleAggregate:
 
 
 # ---------------------------------------------------------------------------
-# Pure-Python demo simulation
+# Demo simulation — AbstractExample subclass
 # ---------------------------------------------------------------------------
 
-def _demo_simulate() -> None:
-    """
-    Pure-Python approximation of the worker-role-assignment algorithm.
+def _bis_distance_worker(is_endpoint: bool, nbr_dists: list) -> float:
+    if is_endpoint:
+        return 0.0
+    if not nbr_dists:
+        return math.inf
+    return min(nbr_dists) + COMM * 0.1
+
+
+class WorkerRoleExample(AbstractExample):
+    """Pure-Python faithful implementation of worker_role_assignment.
 
     Implements the same 7 steps as compute() for log generation without a
     C++ compiler.  Messages are routed along a spanning tree toward the
     nearest RECEIVER node.
 
-    Message delivery model:
-        A message injected at round R by endpoint E takes
-        ``ceil(distances[E] / COMM) + 1`` rounds to travel to a RECEIVER.
-        While in-flight the message contributes to active_procs for every
-        node whose routing subtree contains either the sender or a receiver.
+    Nodes are stored as dict[int, WorkerState]; the initial set is
+    range(DEVICES) but nodes may join or leave between rounds.
 
-    Note: the demo uses the real ``nid`` as node UID (self_uid() placeholder
-    is 0 in the DSL layer, but the demo simulation has direct access to nid).
+    An extra per-simulation log (receiver_messages.log) is opened in
+    on_simulation_start() and closed in on_simulation_end().
     """
-    random.seed(17)
 
-    roles = {nid: ROLE_CYCLE[nid % len(ROLE_CYCLE)] for nid in range(DEVICES)}
-    positions = {
-        nid: (random.uniform(0.0, SIDE), random.uniform(0.0, SIDE))
-        for nid in range(DEVICES)
-    }
-    distances = {nid: math.inf for nid in range(DEVICES)}
-    routing_sets = {nid: frozenset({nid}) for nid in range(DEVICES)}
+    def __init__(self, seed: int = 17):
+        self._rng = random.Random(seed)
+        self._roles: dict = {}
+        self._in_flight: dict = {}
+        self._total_delivered: dict = {}
+        self._recv_log = None
+        self._receiver_ids: frozenset = frozenset()
+        self._endpoint_ids: frozenset = frozenset()
 
-    receiver_ids = frozenset(
-        nid for nid, r in roles.items() if r == WorkerRole.RECEIVER)
-    endpoint_ids = frozenset(
-        nid for nid, r in roles.items() if r in ENDPOINT_ROLES)
+    @property
+    def log_prefix(self) -> str:
+        return "worker_role"
 
-    # in_flight: (sender_nid, interval_index) → (msg_body, rounds_remaining)
-    in_flight: dict = {}
-    total_delivered = {nid: 0 for nid in range(DEVICES)}
-    log_files: dict = {}
+    def initial_positions(self) -> dict:
+        return {
+            nid: (self._rng.uniform(0.0, SIDE), self._rng.uniform(0.0, SIDE))
+            for nid in range(DEVICES)
+        }
 
-    def neighbors_of(nid: int) -> list:
-        x, y = positions[nid]
-        return [
-            j for j in range(DEVICES)
-            if j != nid and math.dist((x, y), positions[j]) <= COMM
-        ]
+    def initial_states(self, positions: dict) -> dict:
+        self._roles = {nid: ROLE_CYCLE[nid % len(ROLE_CYCLE)] for nid in positions}
+        self._receiver_ids = frozenset(
+            nid for nid, r in self._roles.items() if r == WorkerRole.RECEIVER)
+        self._endpoint_ids = frozenset(
+            nid for nid, r in self._roles.items() if r in ENDPOINT_ROLES)
+        return {
+            nid: WorkerState(role=self._roles[nid].value)
+            for nid in positions
+        }
 
-    def _bis_distance(is_endpoint: bool, nbr_dists: list) -> float:
-        if is_endpoint:
-            return 0.0
-        if not nbr_dists:
-            return math.inf
-        return min(nbr_dists) + COMM * 0.1   # simplified unit cost per hop
+    def on_simulation_start(self) -> None:
+        self._in_flight = {}
+        self._total_delivered = {nid: 0 for nid in range(DEVICES)}
+        recv_log_path = self.log_dir / "receiver_messages.log"
+        self._recv_log = open(recv_log_path, "w")  # noqa: SIM115
+        self._recv_log.write(
+            "# Worker Role Assignment — receiver message log\n"
+            "# round,receiver_node,sender_node,sender_role,rounds_in_flight,message_body\n"
+        )
 
-    LOG_DIR.mkdir(exist_ok=True)
-    recv_log_path = LOG_DIR / "receiver_messages.log"
-    recv_log = open(recv_log_path, "w")  # noqa: SIM115 — closed below
-    recv_log.write(
-        "# Worker Role Assignment — receiver message log\n"
-        "# round,receiver_node,sender_node,sender_role,rounds_in_flight,message_body\n"
-    )
+    def round_step(self, round_num: int, positions: dict, states: dict) -> tuple:
+        new_positions = {}
+        new_states = {}
+        distances = {}
+        routing_sets = {}
 
-    for round_num in range(NUM_ROUNDS):
         # ── Move nodes ───────────────────────────────────────────────────────
-        for nid in range(DEVICES):
-            x, y = positions[nid]
-            positions[nid] = (
-                max(0.0, min(SIDE, x + random.uniform(-SPEED, SPEED))),
-                max(0.0, min(SIDE, y + random.uniform(-SPEED, SPEED))),
+        for nid, (x, y) in positions.items():
+            new_positions[nid] = (
+                max(0.0, min(SIDE, x + self._rng.uniform(-SPEED, SPEED))),
+                max(0.0, min(SIDE, y + self._rng.uniform(-SPEED, SPEED))),
             )
 
         # ── Step 1: BIS distances toward RECEIVER ────────────────────────────
-        new_distances = {}
-        for nid in range(DEVICES):
-            is_recv = (roles[nid] == WorkerRole.RECEIVER)  # role 1
-            nbrs = neighbors_of(nid)
+        for nid in positions:
+            is_recv = (self._roles.get(nid) == WorkerRole.RECEIVER)
+            nbrs = neighbors_of(positions, nid, COMM)
             nbr_dists = [
-                distances[n] for n in nbrs if math.isfinite(distances[n])
+                states[n].dist_to_receiver for n in nbrs
+                if math.isfinite(states[n].dist_to_receiver)
             ]
-            new_distances[nid] = _bis_distance(is_recv, nbr_dists)
-        distances = new_distances
+            distances[nid] = _bis_distance_worker(is_recv, nbr_dists)
 
-        # ── Step 2: spanning-tree parents (uses real nid as UID) ─────────────
+        # ── Step 2: spanning-tree parents ─────────────────────────────────────
         parents: dict = {}
-        for nid in range(DEVICES):
-            if roles[nid] == WorkerRole.RECEIVER:  # role 1
+        for nid in positions:
+            if self._roles.get(nid) == WorkerRole.RECEIVER:
                 parents[nid] = -1
                 continue
-            nbrs = neighbors_of(nid)
+            nbrs = neighbors_of(positions, nid, COMM)
             if not nbrs:
                 parents[nid] = -1
                 continue
-            # nid as tie-breaker
             best = min(nbrs, key=lambda n: (distances[n], n))
             parents[nid] = best if distances[best] < distances[nid] else -1
 
         # ── Step 3: neighbor counts ───────────────────────────────────────────
-        neighbor_counts = {nid: len(neighbors_of(nid))
-                           for nid in range(DEVICES)}
+        neighbor_counts = {nid: len(neighbors_of(positions, nid, COMM))
+                           for nid in positions}
 
-        # ── Step 4: routing sets (iterative convergence; uses real nid as UID) ─
-        routing_sets = {nid: frozenset({nid}) for nid in range(DEVICES)}
+        # ── Step 4: routing sets ─────────────────────────────────────────────
+        routing_sets = {nid: frozenset({nid}) for nid in positions}
         for _ in range(8):
             new_rs: dict = {}
-            for nid in range(DEVICES):
+            for nid in positions:
                 children = [
-                    n for n in neighbors_of(nid) if parents.get(n) == nid
+                    n for n in neighbors_of(positions, nid, COMM)
+                    if parents.get(n) == nid
                 ]
                 new_rs[nid] = (
-                    frozenset({nid}).union(
-                        *(routing_sets[c] for c in children))
+                    frozenset({nid}).union(*(routing_sets[c] for c in children))
                     if children
                     else frozenset({nid})
                 )
@@ -542,55 +551,56 @@ def _demo_simulate() -> None:
         # ── Step 5: inject new messages from endpoints every MSG_INTERVAL ────
         if round_num > 0 and round_num % MSG_INTERVAL == 0:
             interval_idx = round_num // MSG_INTERVAL
-            for nid in endpoint_ids:
-                msg_key = (nid, interval_idx)  # (sender_uid, interval_index)
-                if msg_key not in in_flight and math.isfinite(distances[nid]):
-                    role_name = roles[nid].name
-                    sensor_reading = round(random.uniform(0.0, 100.0), 2)
+            for nid in self._endpoint_ids:
+                if nid not in positions:
+                    continue
+                msg_key = (nid, interval_idx)
+                if msg_key not in self._in_flight and math.isfinite(distances[nid]):
+                    role_name = self._roles[nid].name
+                    sensor_reading = round(self._rng.uniform(0.0, 100.0), 2)
                     msg_body = (
                         f"[node {nid} / {role_name}]"
                         f" sensor_reading={sensor_reading}"
                     )
                     hops_est = max(1, math.ceil(distances[nid] / COMM) + 1)
-                    in_flight[msg_key] = (msg_body, hops_est)
+                    self._in_flight[msg_key] = (msg_body, hops_est)
 
-        # ── Step 5 (cont.): advance in-flight messages; deliver on expiry ────
+        # Advance in-flight messages; deliver on expiry
         delivered_this_round: list = []
-        for msg_key, (msg_body, rounds_left) in list(in_flight.items()):
+        for msg_key, (msg_body, rounds_left) in list(self._in_flight.items()):
             sender_nid = msg_key[0]
             if rounds_left <= 1:
-                # Deliver to all reachable receivers
-                for recv_nid in sorted(receiver_ids):
-                    if math.isfinite(distances[sender_nid]):
-                        total_delivered[recv_nid] += 1
+                for recv_nid in sorted(self._receiver_ids):
+                    if recv_nid not in positions:
+                        continue
+                    if math.isfinite(distances.get(sender_nid, math.inf)):
+                        self._total_delivered[recv_nid] += 1
                         original_hops = max(1, math.ceil(
-                            distances[sender_nid] / COMM) + 1)
-                        recv_log.write(
+                            distances.get(sender_nid, math.inf) / COMM) + 1)
+                        self._recv_log.write(
                             f"{round_num},{recv_nid},{sender_nid},"
-                            f"{roles[sender_nid].name},"
+                            f"{self._roles[sender_nid].name},"
                             f"{original_hops},{msg_body}\n"
                         )
                 delivered_this_round.append(msg_key)
             else:
-                in_flight[msg_key] = (msg_body, rounds_left - 1)
+                self._in_flight[msg_key] = (msg_body, rounds_left - 1)
         for mk in delivered_this_round:
-            del in_flight[mk]
+            del self._in_flight[mk]
 
-        # ── Active process count per node (messages currently in-flight) ──────
-        active_procs = {nid: 0 for nid in range(DEVICES)}
-        for (sender_nid, _), _ in in_flight.items():
-            for nid in range(DEVICES):
+        # ── Active process count per node ─────────────────────────────────────
+        active_procs = {nid: 0 for nid in positions}
+        for (sender_nid, _), _ in self._in_flight.items():
+            for nid in positions:
                 rs = routing_sets[nid]
-                if sender_nid in rs or any(r in rs for r in receiver_ids):
+                if sender_nid in rs or any(r in rs for r in self._receiver_ids):
                     active_procs[nid] += 1
 
-        # ── Write per-node log entries ────────────────────────────────────────
-        for nid in range(DEVICES):
-            role = roles[nid]
-            role_name = role.name
+        # ── Build new states (mirrors match/case step 7) ───────────────────────
+        for nid in positions:
+            role = self._roles.get(nid, WorkerRole.UNASSIGNED)
             dist = distances[nid]
 
-            # routing_set_size: role-dependent metric (mirrors match/case step 7)
             if role in (WorkerRole.LIDAR, WorkerRole.REPEATER):
                 rs_size = neighbor_counts[nid]
             elif role == WorkerRole.UNASSIGNED:
@@ -599,38 +609,48 @@ def _demo_simulate() -> None:
                 rs_size = len(routing_sets[nid])
 
             recv_count = (
-                total_delivered[nid] if role == WorkerRole.RECEIVER else 0
+                self._total_delivered[nid]
+                if role == WorkerRole.RECEIVER else 0
             )
 
-            if nid not in log_files:
-                log_path = LOG_DIR / f"node_{nid}_worker_role.log"
-                lf = open(log_path, "w")  # noqa: SIM115 — closed below
-                lf.write(
-                    f"# Worker Role Assignment — node {nid} ({role_name})\n"
-                    "# round,dist_to_receiver,routing_set_size,"
-                    "received_count,active_procs\n"
-                )
-                log_files[nid] = lf
-
-            log_files[nid].write(
-                f"{round_num},{dist:.4f},{rs_size},"
-                f"{recv_count},{active_procs[nid]}\n"
+            new_states[nid] = WorkerState(
+                role=role.value,
+                dist_to_receiver=dist,
+                routing_set_size=rs_size,
+                received_count=recv_count,
+                active_procs=active_procs[nid],
             )
 
-    for lf in log_files.values():
-        lf.close()
-    recv_log.close()
+        return new_positions, new_states
 
-    total_msgs = sum(total_delivered.values())
-    print(
-        f"    Wrote {DEVICES} node logs + receiver_messages.log → {LOG_DIR}/")
-    print(f"    Messages still in flight at end:  {len(in_flight)}")
-    print(f"    Total messages delivered to receiver(s): {total_msgs}")
-    for recv_nid in sorted(receiver_ids):
-        print(
-            f"    RECEIVER node {recv_nid:2d}: "
-            f"{total_delivered[recv_nid]} messages received"
+    def log_header(self, node_id: int, state) -> str:
+        role_name = WorkerRole(state.role).name
+        return (
+            f"# Worker Role Assignment — node {node_id} ({role_name})\n"
+            "# round,dist_to_receiver,routing_set_size,"
+            "received_count,active_procs\n"
         )
+
+    def log_line(self, round_num: int, node_id: int, state) -> str:
+        return (
+            f"{round_num},{state.dist_to_receiver:.4f},{state.routing_set_size},"
+            f"{state.received_count},{state.active_procs}\n"
+        )
+
+    def on_simulation_end(self) -> None:
+        if self._recv_log:
+            self._recv_log.close()
+            self._recv_log = None
+        total_msgs = sum(self._total_delivered.values())
+        print(
+            f"    Wrote {DEVICES} node logs + receiver_messages.log → {self.log_dir}/")
+        print(f"    Messages still in flight at end:  {len(self._in_flight)}")
+        print(f"    Total messages delivered to receiver(s): {total_msgs}")
+        for recv_nid in sorted(self._receiver_ids):
+            print(
+                f"    RECEIVER node {recv_nid:2d}: "
+                f"{self._total_delivered[recv_nid]} messages received"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -662,7 +682,7 @@ def main() -> None:
         for r in range(8)
     )
     print(f"    Role distribution: {role_summary}")
-    _demo_simulate()
+    WorkerRoleExample().run(NUM_ROUNDS)
 
     print("\nAlgorithm summary (7 steps — all run at every node):")
     print("  1. bis_distance     — gradient distance to nearest RECEIVER (WorkerRole.RECEIVER)")

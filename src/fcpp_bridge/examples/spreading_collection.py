@@ -26,10 +26,14 @@ Differences from original C++:
 import math
 import random
 from dataclasses import dataclass
-from pathlib import Path
 
 from fcpp_bridge.python_dsl import aggregate_function, Neighborhood
-from examples._example_utils import report_validation, report_transpilation
+from fcpp_bridge.examples._example_utils import (
+    neighbors_of,
+    report_validation,
+    report_transpilation,
+)
+from fcpp_bridge.examples.abstract_example import AbstractExample
 
 # ---------------------------------------------------------------------------
 # Simulation constants (matching spreading_collection.hpp)
@@ -39,11 +43,9 @@ SIDE = 200.0        # deployment area side length (units)
 HEIGHT = 100.0      # deployment area height (units)
 COMM = 100.0        # communication radius (units)
 SPEED = 10.0        # node movement speed (units/round)
-NUM_NODES = 15      # swarm size
+NUM_NODES = 15      # initial swarm size (nodes can join/leave dynamically)
 NUM_ROUNDS = 30     # simulation rounds
 SOURCE_ID = 0       # fixed source node (original C++ rotates every 50 seconds)
-
-LOG_DIR = Path(__file__).parent / "logs"
 
 
 # ---------------------------------------------------------------------------
@@ -149,59 +151,53 @@ class SpreadingCollectionAggregate:
 
 
 # ---------------------------------------------------------------------------
-# Demo simulation — pure Python approximation for log generation
+# Demo simulation — AbstractExample subclass
 # ---------------------------------------------------------------------------
 
-def _demo_simulate() -> None:
-    """
-    Pure-Python approximation of the spreading-collection algorithm.
+class SpreadingCollectionExample(AbstractExample):
+    """Pure-Python approximation of the spreading-collection algorithm.
 
     Implements the same 5 steps as compute() using Python logic so that
     per-node log files can be produced without a C++ compiler.
     The topology is a random spatial deployment with fixed-radius connectivity.
+
+    Nodes are stored as dict[int, SpreadingState]; the initial set is
+    range(NUM_NODES) but nodes may join or leave between rounds.
     """
-    random.seed(42)
 
-    # Initial positions (x, y) in [0, SIDE]
-    positions = {
-        i: (random.uniform(0.0, SIDE), random.uniform(0.0, SIDE))
-        for i in range(NUM_NODES)
-    }
+    def __init__(self, seed: int = 42):
+        self._rng = random.Random(seed)
 
-    # Initial states: node SOURCE_ID is the source
-    states = {
-        i: SpreadingState(is_source=(i == SOURCE_ID))
-        for i in range(NUM_NODES)
-    }
+    @property
+    def log_prefix(self) -> str:
+        return "spreading_collection"
 
-    def neighbors_of(nid):
-        """Return IDs of nodes within COMM radius (excluding self)."""
-        x, y = positions[nid]
-        return [
-            j for j in range(NUM_NODES)
-            if j != nid
-            and math.dist((x, y), positions[j]) <= COMM
-        ]
+    def initial_positions(self) -> dict:
+        return {
+            i: (self._rng.uniform(0.0, SIDE), self._rng.uniform(0.0, SIDE))
+            for i in range(NUM_NODES)
+        }
 
-    LOG_DIR.mkdir(exist_ok=True)
-    log_files = {}
+    def initial_states(self, positions: dict) -> dict:
+        return {
+            nid: SpreadingState(is_source=(nid == SOURCE_ID))
+            for nid in positions
+        }
 
-    for round_num in range(NUM_ROUNDS):
+    def round_step(self, round_num: int, positions: dict, states: dict) -> tuple:
+        new_positions = {}
         new_states = {}
 
-        for nid in range(NUM_NODES):
-            s = states[nid]
-            nbrs = neighbors_of(nid)
-            nbr_s = [states[n] for n in nbrs]
-
-            # ── Step 1: rectangle_walk (move node) ────────────────────────
-            x, y = positions[nid]
-            dx = random.uniform(-SPEED, SPEED)
-            dy = random.uniform(-SPEED, SPEED)
-            positions[nid] = (
-                max(0.0, min(SIDE, x + dx)),
-                max(0.0, min(SIDE, y + dy)),
+        for nid, (x, y) in positions.items():
+            # ── Step 1: rectangle_walk (move node) ───────────────────────
+            new_positions[nid] = (
+                max(0.0, min(SIDE, x + self._rng.uniform(-SPEED, SPEED))),
+                max(0.0, min(SIDE, y + self._rng.uniform(-SPEED, SPEED))),
             )
+
+        for nid in positions:
+            s = states[nid]
+            nbr_s = [states[n] for n in neighbors_of(positions, nid, COMM)]
 
             # ── Step 2: is_source ─────────────────────────────────────────
             is_source = s.is_source
@@ -216,15 +212,12 @@ def _demo_simulate() -> None:
 
             # ── Step 4: mp_collection (max distance toward source) ────────
             if is_source:
-                # Source accumulates max of all finite distances from "children"
-                # (nodes with dist > 0, i.e. further from source)
                 child_vals = [
                     ns.calc_distance for ns in nbr_s
                     if math.isfinite(ns.calc_distance)
                 ]
                 sdiam = max(child_vals, default=0.0)
             else:
-                # Non-source nodes propagate upstream what the parent reports
                 parents = [ns for ns in nbr_s if ns.calc_distance < dist]
                 sdiam = max((ns.source_diameter for ns in parents), default=0.0)
 
@@ -232,11 +225,10 @@ def _demo_simulate() -> None:
             if is_source:
                 diam = sdiam
             else:
-                parents = [(ns.calc_distance, ns.diameter) for ns in nbr_s
-                           if ns.calc_distance < dist]
-                if parents:
-                    # take the diameter from the closest node toward the source
-                    diam = min(parents, key=lambda t: t[0])[1]
+                parent_pairs = [(ns.calc_distance, ns.diameter) for ns in nbr_s
+                                if ns.calc_distance < dist]
+                if parent_pairs:
+                    diam = min(parent_pairs, key=lambda t: t[0])[1]
                 else:
                     diam = s.diameter   # retain last known
 
@@ -247,26 +239,23 @@ def _demo_simulate() -> None:
                 diameter=diam,
             )
 
-            # ── Write log entry ───────────────────────────────────────────
-            if nid not in log_files:
-                log_path = LOG_DIR / f"node_{nid}_spreading_collection.log"
-                lf = open(log_path, "w")
-                lf.write(
-                    f"# SpreadingCollection — node {nid}\n"
-                    "# round,is_source,calc_distance,source_diameter,diameter\n"
-                )
-                log_files[nid] = lf
-            log_files[nid].write(
-                f"{round_num},{int(is_source)},"
-                f"{dist:.4f},{sdiam:.4f},{diam:.4f}\n"
-            )
+        return new_positions, new_states
 
-        states = new_states
+    def log_header(self, node_id: int, state) -> str:
+        return (
+            f"# SpreadingCollection — node {node_id}\n"
+            "# round,is_source,calc_distance,source_diameter,diameter\n"
+        )
 
-    for lf in log_files.values():
-        lf.close()
+    def log_line(self, round_num: int, node_id: int, state) -> str:
+        return (
+            f"{round_num},{int(state.is_source)},"
+            f"{state.calc_distance:.4f},{state.source_diameter:.4f},"
+            f"{state.diameter:.4f}\n"
+        )
 
-    print(f"    Wrote {NUM_NODES} log files → {LOG_DIR}/")
+    def on_simulation_end(self) -> None:
+        print(f"    Wrote {NUM_NODES} log files → {self.log_dir}/")
 
 
 # ---------------------------------------------------------------------------
@@ -289,10 +278,9 @@ def main() -> None:
     print("\n[2/3] Transpiling to C++...")
     report_transpilation(SpreadingCollectionAggregate)
 
-    # ── Phase 3: Demo simulation + log files ─────────────────────────────
     print("\n[3/3] Running demo simulation and writing per-node logs...")
     print(f"    Nodes: {NUM_NODES}  |  Rounds: {NUM_ROUNDS}  |  Source: node {SOURCE_ID}")
-    _demo_simulate()
+    SpreadingCollectionExample().run(NUM_ROUNDS)
 
     print("\nAlgorithm summary:")
     print("  1. rectangle_walk  — random 3D movement in deployment area")
