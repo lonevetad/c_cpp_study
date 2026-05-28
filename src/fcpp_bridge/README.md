@@ -7,8 +7,27 @@ Production-ready bridge between Python and FCPP (Field Calculus C++14 framework)
 ```bash
 cd <repo-root>
 PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -v
-# 611 pass, 0 fail
+# 616 pass, 0 fail
 ```
+
+> **`PYTHONPATH` requirement**: `fcpp_bridge` is not published on PyPI — it lives
+> in `src/fcpp_bridge/` inside this repository.  Python must find the `src/`
+> directory on its module search path before any `import fcpp_bridge` will work.
+>
+> ```bash
+> # Persistent for the terminal session (run from the repository root):
+> export PYTHONPATH=/path/to/c_cpp_study/src
+>
+> # — or — inline prefix for a single command:
+> PYTHONPATH=src python src/fcpp_bridge/examples/worker_role_assignment.py
+> ```
+>
+> If your working directory is `src/fcpp_bridge/`, the `src/` directory is one
+> level up (`..`):
+>
+> ```bash
+> PYTHONPATH=.. /usr/bin/python3 examples/worker_role_assignment.py
+> ```
 
 ## Overview
 
@@ -44,8 +63,13 @@ PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/test
 | v1.6  | `self_uid()` primitive (→ `node.uid`); enum comments; step 7 role tasks | ✅ Done | +1 |
 | v1.7  | `RoleCommunicationType` enum; `RIPETITOR`→`REPEATER`; `RUBBLES_REMOVER`→endpoint | ✅ Done | +0 |
 | v1.8  | Logging refactor: library `print()` → `get_logger()`; `_example_utils` validation helper; v1.9 gap-analysis plan | ✅ Done | +0 |
+| v1.8.1 | `worker_role_assignment`: `ROLE_CYCLE` (5 extra `WorkerRole.REPEATER` nodes, `DEVICES=26`); `ROLE_COMM_TYPE` frozenset-unpack bug fix | ✅ Done | +0 |
+| v1.8.2 | Enum-value refactoring: `WorkerRole.X.value` in comparisons and `case` labels; `ROLE_CYCLE` uses enum members; `int(r)` → `r.value` in output | ✅ Done | +0 |
+| v1.8.3 | Named constants `ADDITIONAL_REPEATERS_EACH_CYCLE` and `FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS`; `DEVICES` derived; `ROLE_CYCLE` uses unpacking `*([WorkerRole.REPEATER] * N)` | ✅ Done | +0 |
+| v1.8.4 | Transpiler enum constant-folding: `PythonAstVisitor` resolves `IntEnum.X.value` dotted chains to integer literals via `compute.__globals__`; valid C++ `case` labels and comparisons | ✅ Done | +5 |
+| v1.8.5 | Example import fix: `from examples._example_utils` → `from fcpp_bridge.examples._example_utils` in all 6 example files; `PYTHONPATH` requirement documented in README, TUTORIAL_simple, TUTORIAL_in_depth | ✅ Done | +0 |
 
-**Total: 611 tests — 611 pass, 0 fail.**
+**Total: 616 tests — 616 pass, 0 fail.**
 
 ## Architecture
 

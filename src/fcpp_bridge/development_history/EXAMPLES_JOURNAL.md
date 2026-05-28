@@ -27,6 +27,7 @@ Per-node log files are written to `src/fcpp_bridge/examples/logs/`.
 | `message_dispatch.py` | `fcpp-sample-project/lib/message_dispatch.hpp` | `rectangle_walk`, `bis_distance`, `sp_collection`, `spawn`, `old` | ✅ Done |
 | `chain_decaying.py` | `fcpp-sample-project/run/chain_decaying.hpp` + `fcpp-exercises/run/chain_decaying.hpp` | `nbr`, `min_hood` | ✅ Done |
 | `worker_role_assignment.py` | **original** — v1.5/v1.6/v1.7 DSL showcase | `bis_distance`, `nbr`, `min_hood`, `count_hood`, `sp_collection`, `spawn`, `old`, `self_uid()` + `match/case` + `RoleCommunicationType` | ✅ Done |
+| `communication_roles_assignment.py` | **original** — v1.9 DSL showcase | `bis_distance` ×2, `nbr`, `min_hood`, `old` ×2, `broadcast`, `self_uid()` + `match/case` + `CommunicationRole` + setup: isolation migration + point placement | ✅ Done |
 
 ---
 
@@ -93,10 +94,14 @@ Per-node log files are written to `src/fcpp_bridge/examples/logs/`.
 - **Origin**: original DSL-showcase example (not ported from C++); designed to exercise
   the `match/case` → `switch`, `spawn`/`old`, (v1.6) `self_uid()`, and (v1.7)
   `RoleCommunicationType` features.
-- **Role assignment**: `role = node_id % 8` gives 3 nodes per role with `DEVICES = 24`.
-  Endpoint roles (2, 3, 5, 6, 7): LIDAR, INFRARED_SENSOR, TORCHLIGHT_MICROPHONE,
-  RUBBLES_REMOVER, FLYING_OVERSEER.  Receiver role (1): RECEIVER base station.
-  Repeater roles (0, 4): UNASSIGNED (passive), REPEATER (active relay).
+- **Role assignment** (v1.8.1): `ROLE_CYCLE[nid % len(ROLE_CYCLE)]` — 13-slot cycle
+  with 5 extra `WorkerRole.REPEATER` slots; `DEVICES = 26` (2 full cycles).
+  Totals: REPEATER-type=14, ENDPOINT-type=10, RECEIVER-type=2.
+  Endpoint roles: LIDAR, INFRARED_SENSOR, TORCHLIGHT_MICROPHONE, RUBBLES_REMOVER,
+  FLYING_OVERSEER.  Receiver role: RECEIVER.  Repeater roles: UNASSIGNED (passive),
+  REPEATER (active relay).
+- **ROLE_COMM_TYPE bug fix** (v1.8.1): `{**frozenset}` in dict literal raises
+  `TypeError`; fixed to `{**{r: ... for r in frozenset}}` comprehension form.
 - **RoleCommunicationType** (v1.7): new enum (ENDPOINT=0, RECEIVER=1, REPEATER=2)
   associated with each WorkerRole via `ROLE_COMM_TYPE` dict.  Endpoint nodes gather
   sensor data and inject readings; repeater nodes relay data without originating it.
@@ -104,23 +109,90 @@ Per-node log files are written to `src/fcpp_bridge/examples/logs/`.
   `min_hood`, `count_hood`, `sp_collection`, `spawn`, `old`) are called before the
   `match/case` block.  Placing primitives inside switch branches would desynchronise the
   FCPP `CALL` counter across nodes and produce incorrect C++ behavior.
-- **Integer case labels**: Python 3.10+ bare names in `case NAME:` are capture patterns
-  (always match); integer literals `case 0:`, `case 1:`, … are value patterns (correct).
+- **Enum-value case labels** (v1.8.2): `case WorkerRole.X.value:` dotted-name value
+  patterns (Python 3.10+ `a.b.c` chains are always value patterns, never capture
+  patterns).  Replaces integer literals `case 0:`, `case 1:`, … — no magic numbers.
+- **Enum-value comparisons** (v1.8.2): `role == WorkerRole.X.value` replaces `role == N`
+  throughout `compute()`.  `ROLE_CYCLE` uses `WorkerRole.X` members directly.
+  `WorkerRole(x).name` calls replaced by `x.name` since `roles[nid]` is now a
+  `WorkerRole` member.  `int(r)` / `int(ct)` in `main()` replaced by `r.value` /
+  `ct.value`.
+- **Named swarm-size constants** (v1.8.3): `ADDITIONAL_REPEATERS_EACH_CYCLE = 5`
+  (extra REPEATER slots per cycle; keep `> 3` for REPEATER-type > ENDPOINT-type) and
+  `FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS = 2` (number of full ROLE_CYCLE repetitions);
+  `DEVICES = len(ROLE_CYCLE) * FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS` (derived).
+  `ROLE_CYCLE` uses `*([WorkerRole.REPEATER] * ADDITIONAL_REPEATERS_EACH_CYCLE)`
+  instead of 5 explicit entries.
+- **Transpiler enum constant-folding** (v1.8.4): `PythonAstVisitor` now accepts a
+  `constants` dict (populated from `compute.__globals__`).  Dotted chains like
+  `WorkerRole.RECEIVER.value` are resolved to integer literals, making `case`
+  labels and comparisons emit valid C++.  5 new tests added.
 - **self_uid()** (v1.6): `self_uid()` → `node.uid` in generated C++ (no CALL counter);
   used in step 2 (tie-breaking), step 4 (sp_collection local value), step 5 (spawn key
   sender half).  Receiver UID in spawn key is still `0` (placeholder — v1.9 fix planned).
 - **Step 7 role tasks**: each `match/case` branch contains a role-specific task
   description and a local placeholder variable; tasks without a real-world implementation
   are marked with `# [Placeholder]` comments.
-- **routing_set_size repurposing**: LIDAR (2) and REPEATER (4) store `count_hood()`
-  (coverage metric); UNASSIGNED (0) stores `0` (passive); all other roles store
+- **routing_set_size repurposing**: LIDAR and REPEATER store `count_hood()`
+  (coverage metric); UNASSIGNED stores `0` (passive); all other roles store
   `len(sp_collection set)`.
 - **v1.8**: `main()` uses shared `report_validation`/`report_transpilation` helpers from
   `examples/_example_utils.py`; no algorithm changes.
+- **v1.8.5**: Import path fixed across all 6 example files: `from examples._example_utils import` →
+  `from fcpp_bridge.examples._example_utils import`.  The bare `examples` package name was not
+  resolvable under either `PYTHONPATH=src` (from repo root) or `PYTHONPATH=..` (from
+  `src/fcpp_bridge/`) because neither puts `src/fcpp_bridge/` on `sys.path`.
 - **Full design notes**: `development_history/WORKER_ROLE_ASSIGNMENT.md` — scenario,
   algorithm table, DSL feature rationale, limitations, 7 evolution paths.
+- **Pre-v1.9 refactoring**: `development_history/PRE_V19_REFACTORING.md` — v1.8.1
+  ROLE_CYCLE + bug fix; v1.8.2 enum-value magic-number elimination.
 - **v1.9 plan**: `development_history/V1_9_PLAN.md` — receiver UID fix via `broadcast`,
   `frozenset` → `set_t` transpilation, `min_hood` tuple → `std::make_tuple`, and more.
+
+### communication_roles_assignment.py
+- **Origin**: original DSL-showcase example (not ported from C++); designed to exercise
+  `bis_distance` ×2, `nbr + min_hood` election, `old` ×2, `broadcast`, and `match/case`
+  with a simulated communication scenario.
+- **CommunicationRole enum**: `UNASSIGNED(0)`, `SENDER(1)`, `REPEATER(2)`, `RECEIVER(3)`.
+  Relationship to `worker_role_assignment.py`: `RoleCommunicationType.ENDPOINT → SENDER`,
+  `RoleCommunicationType.RECEIVER → RECEIVER`, `RoleCommunicationType.REPEATER → REPEATER`;
+  `UNASSIGNED` is new (pre-convergence default before roles are resolved).
+- **Configuration** (defaults): `NODES=15`, `SINK_POINTS=2`, `SOURCE_POINTS=3`,
+  `COMM=100.0`, `MSG_TICKS_INTERVAL=10`, `ISOLATION_THRESHOLD=0.20`,
+  `MAX_MIGRATION_ITERS=50`, `MAX_POINT_PLACEMENT_ITERS=10`.
+- **Consistency check**: `SINK_POINTS + SOURCE_POINTS <= NODES` enforced; raises
+  `ValueError("Inconsistent configuration: ...")` if violated.
+- **Isolation migration**: `_build_and_migrate_network()` — places nodes randomly,
+  counts isolated nodes (no neighbors within COMM), migrates isolated ones by random
+  relocation in a while loop (up to `MAX_MIGRATION_ITERS`); logs each pass.
+- **Sink/source placement**: `_place_points()` — for each of the n points:
+  chooses a random unlocked anchor node, samples a random position within COMM of
+  that anchor, checks that the candidate does not fall within COMM of any
+  already-locked node (conflict → retry up to `MAX_POINT_PLACEMENT_ITERS`);
+  locks the anchor. A `locked` dict maps `nid → (point_pos, is_sink)`.
+- **Role assignment**: `_assign_initial_roles()` — Receivers: one per sink point,
+  closest node within COMM (tie → smallest ID); Senders: one per source point,
+  closest non-Receiver within COMM (tie → smallest ID); others → Repeater.
+- **Aggregate DSL steps** (all 7 run at EVERY node):
+  1. `bis_distance(is_receiver)` — gradient toward Receivers
+  2. `bis_distance(is_sender)` — gradient away from Senders
+  3. `nbr(dist_to_nearest_source)` + `min_hood(...)` — Sender election
+  4. `old(0, t+1)` — round counter
+  5. `broadcast(dist_from_sender, payload)` — propagate Sender message outward
+  6. `old({}, accumulate)` — received-message log at Receivers
+  7. `match/case` — role-specific task + state assembly (no primitives inside)
+- **Message payload**: `(sender_uid, round_tick, dist_to_nearest_source)` — dummy data
+  for demonstration purposes; Sender creates a new payload every `MSG_TICKS_INTERVAL` rounds.
+- **Shared helpers**: uses `neighbors_of` and `SPAWN_STATUS_*` from `_example_utils`;
+  no local re-definitions.
+- **`_example_utils` refactoring** (v1.9): added `neighbors_of`, `build_positions`,
+  and `SPAWN_STATUS_BORDER/INTERNAL/TERMINATED` to `_example_utils.py`; all 6
+  pre-existing main examples updated to use `neighbors_of` from shared module;
+  `message_dispatch.py` and `worker_role_assignment.py` updated to use
+  `SPAWN_STATUS_*` aliases.  Cohesiveness plan: `examples_cohesiveness.md`.
+- **Future exercises**: see `FUTURE_EXERCISES.md` — FE-1 (spawn for multiple
+  instances), FE-2 (dynamic points), FE-3 (mobile nodes), FE-4 (area partition),
+  and more.
 
 ---
 

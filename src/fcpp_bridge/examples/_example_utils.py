@@ -5,12 +5,83 @@ All example ``main()`` functions perform the same boilerplate steps:
   2. Transpile to C++ and report the generated size.
 
 These helpers centralise that repeated code so each example stays concise.
+
+Shared simulation helpers
+--------------------------
+``neighbors_of(positions, nid, comm)``
+    Returns IDs of all nodes within *comm* radius of *nid* (excluding self).
+    Replaces the identical inner function previously defined in every
+    ``_demo_simulate()`` body.
+
+``build_positions(n, side_x, side_y, seed)``
+    Builds a random 2-D positions dict for *n* nodes.
+
+Spawn status constants
+-----------------------
+``SPAWN_STATUS_BORDER = 0``   — ``fcpp::status::border``
+``SPAWN_STATUS_INTERNAL = 1`` — ``fcpp::status::internal``
+``SPAWN_STATUS_TERMINATED = 2`` — ``fcpp::status::terminated_output``
 """
 
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Type
+import math
+import random as _random
+from typing import Dict, List, Optional, Tuple, Type
+
+# ---------------------------------------------------------------------------
+# Spawn process status codes — mirror fcpp::status enum values exactly.
+# These constants are shared by any example that uses the spawn primitive.
+# ---------------------------------------------------------------------------
+
+SPAWN_STATUS_BORDER = 0      # fcpp::status::border     (node is off routing path)
+SPAWN_STATUS_INTERNAL = 1    # fcpp::status::internal   (node is actively routing)
+SPAWN_STATUS_TERMINATED = 2  # fcpp::status::terminated_output (message reached dest)
+
+
+# ---------------------------------------------------------------------------
+# Simulation geometry helpers
+# ---------------------------------------------------------------------------
+
+def neighbors_of(
+    positions: Dict[int, Tuple[float, ...]],
+    nid: int,
+    comm: float,
+) -> List[int]:
+    """Return IDs of all nodes within *comm* radius of *nid*, excluding self.
+
+    *positions* maps node-ID to a position tuple of any dimension (2-D or 3-D).
+    Uses ``math.dist`` so it works for both ``(x, y)`` and ``(x, y, z)`` tuples.
+    """
+    p = positions[nid]
+    return [j for j in positions if j != nid and math.dist(p, positions[j]) <= comm]
+
+
+def build_positions(
+    n: int,
+    side_x: float,
+    side_y: Optional[float] = None,
+    *,
+    seed: Optional[int] = None,
+) -> Dict[int, Tuple[float, float]]:
+    """Build a random 2-D positions dict for *n* nodes in ``[0, side_x] × [0, side_y]``.
+
+    Parameters
+    ----------
+    n:
+        Number of nodes.  Keys are ``0 … n-1``.
+    side_x:
+        Width of the deployment area.
+    side_y:
+        Height of the deployment area.  Defaults to *side_x* (square area).
+    seed:
+        Optional RNG seed for reproducibility.
+    """
+    if side_y is None:
+        side_y = side_x
+    rng = _random.Random(seed)
+    return {i: (rng.uniform(0.0, side_x), rng.uniform(0.0, side_y)) for i in range(n)}
 
 
 def report_validation(

@@ -19,8 +19,27 @@ production-quality simulation class that supports:
 Same as the simple tutorial plus:
 
 ```bash
-pip install fcpp_bridge    # or PYTHONPATH=.../src
+pip install fcpp_bridge    # or PYTHONPATH=.../src (see note below)
 ```
+
+> **`PYTHONPATH` requirement**: `fcpp_bridge` is not published on PyPI — it lives
+> in `src/fcpp_bridge/` inside this repository.  If you are not installing the
+> package, add the `src/` directory to Python's module search path instead:
+>
+> ```bash
+> # Persistent for the terminal session (run from the repository root):
+> export PYTHONPATH=/path/to/c_cpp_study/src
+>
+> # — or — inline prefix for a single command:
+> PYTHONPATH=src python src/fcpp_bridge/examples/my_script.py
+> ```
+>
+> If your working directory is `src/fcpp_bridge/`, the `src/` directory is one
+> level up (`..`):
+>
+> ```bash
+> PYTHONPATH=.. /usr/bin/python3 examples/my_script.py
+> ```
 
 Verify:
 

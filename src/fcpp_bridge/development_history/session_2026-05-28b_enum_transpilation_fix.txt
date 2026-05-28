@@ -1,0 +1,149 @@
+SESSION RECOVERY — 2026-05-28 (second session of the day)
+Branch: bugfix/fcpp_bridge/it1
+
+=== WHAT WAS DONE IN THIS SESSION ===
+
+Part 1 — Continued from previous session (doc update for v1.8.3)
+----------------------------------------------------------------
+Task: update WORKER_ROLE_ASSIGNMENT.md to document the two new named
+constants added manually by the user in worker_role_assignment.py:
+  - ADDITIONAL_REPEATERS_EACH_CYCLE = 5
+  - FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS = 2
+  - DEVICES = len(ROLE_CYCLE) * FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS
+
+Files changed:
+  development_history/WORKER_ROLE_ASSIGNMENT.md
+    - Scenario section rewritten with formula tables and invariant guide
+    - Algorithm table: "(role 1)" → "(WorkerRole.RECEIVER)"
+    - match/case code examples: all "case N:" → "case WorkerRole.X.value:"
+    - "Integer literals" design section renamed to "Enum-value dotted-name
+      patterns (v1.8.2)" with transpiler caveat and Python 3.10+ explanation
+    - "Role assignment via nid % 8" renamed to "Role assignment via ROLE_CYCLE
+      (v1.8.1)" with a 2-row tweaking guide table + formula block
+    - Known Limitations: "All 12 endpoints" → "All 10 endpoints"
+    - Evolution 6: hardcoded receiver count → formula-based description
+    - Files Modified: added v1.8.1, v1.8.2, v1.8.3 table sections
+
+  development_history/PRE_V19_REFACTORING.md
+    - Added v1.8.3 section with before/after code, tweaking guide table
+
+  development_history/EXAMPLES_JOURNAL.md
+    - Added v1.8.3 bullet (named constants description)
+
+  src/fcpp_bridge/README.md
+    - Added v1.8.3 row
+
+Part 2 — Enum transpilation fix (v1.8.4)
+-----------------------------------------
+Problem discovered:
+  The transpiler emitted dotted attribute chains verbatim.
+  "case WorkerRole.RECEIVER.value:" in Python → "case WorkerRole.RECEIVER.value:"
+  in C++, which is invalid because C++ case labels must be compile-time integer
+  constants, not runtime attribute access expressions.
+
+Root cause:
+  PythonAstVisitor.visit_Attribute emitted "obj.attr" without any namespace
+  context, so it couldn't resolve "WorkerRole.RECEIVER.value" to the integer 1.
+
+Fix:
+  1. transpiler/python_ast_visitor.py
+     - PythonAstVisitor.__init__ now accepts optional "constants: dict = None"
+     - New _resolve_dotted_chain(node) helper: walks the Attribute chain, looks
+       up the root name in self.constants, resolves remaining attrs via getattr()
+     - visit_Attribute: if constants is set, tries _resolve_dotted_chain; if it
+       returns an int/float/bool, emits the literal value instead of the chain
+
+  2. transpiler/transpiler_core.py
+     - _transpile_method_body now passes getattr(method, '__globals__', {}) as
+       "constants" to PythonAstVisitor so all module-level names (including
+       IntEnum classes) are available for constant-folding
+
+Tests added (5 new, total now 616):
+  tests/transpiler/test_python_ast_visitor.py
+  - _TestRole(IntEnum) defined at module level (UNASSIGNED=0, RECEIVER=1, SENSOR=2)
+  - _body_with_consts(fn, constants) helper
+  - test_enum_value_attribute_folds_to_integer
+  - test_enum_member_folds_to_integer
+  - test_attribute_no_fold_when_constants_empty
+  - test_enum_value_in_compare_folds
+  - test_enum_value_in_match_case_folds
+
+Behavior of the fix:
+  Before: case WorkerRole.RECEIVER.value: → case WorkerRole.RECEIVER.value: (invalid C++)
+  After:  case WorkerRole.RECEIVER.value: → case 1:  (valid C++)
+  Comparisons: role == WorkerRole.RECEIVER.value → (role == 1)
+  Fallback: if constant not in globals, emits verbatim (backward compatible)
+
+Documentation updated:
+  DSL_GUIDE.md
+    - §6.7: added IntEnum constant-folding section with code example
+    - §9 Limitations: updated "match/case only supports integer literals" row
+  development_history/WORKER_ROLE_ASSIGNMENT.md
+    - Transpiler caveat (added in v1.8.2 notes) replaced with "fixed in v1.8.4"
+    - Files Modified: added v1.8.4 section
+  development_history/PRE_V19_REFACTORING.md
+    - C++ transpilation caveat updated to "fixed in v1.8.4"
+  development_history/EXAMPLES_JOURNAL.md
+    - Added v1.8.4 bullet
+  README.md
+    - Added v1.8.4 row; test count updated to 616
+
+=== CURRENT STATE (end of session) ===
+
+Branch: bugfix/fcpp_bridge/it1
+Test count: 616 pass, 0 fail
+Latest version: v1.8.4
+
+Key files:
+  examples/worker_role_assignment.py      v1.8.3 (last code change)
+  transpiler/python_ast_visitor.py        v1.8.4 (constants param + fold)
+  transpiler/transpiler_core.py           v1.8.4 (passes __globals__)
+  tests/transpiler/test_python_ast_visitor.py  +5 tests
+  development_history/WORKER_ROLE_ASSIGNMENT.md  fully updated
+  development_history/PRE_V19_REFACTORING.md     fully updated
+  development_history/EXAMPLES_JOURNAL.md        fully updated
+  DSL_GUIDE.md                                   §6.7 and §9 updated
+  README.md                                      v1.8.3 + v1.8.4 rows
+
+Known remaining work (v1.9):
+  - Receiver UID fix: replace spawn key (self_uid(), 0) with
+    (self_uid(), receiver_uid) where receiver_uid = broadcast(is_receiver, self_uid())
+  - frozenset → set_t transpilation
+  - min_hood tuple → std::make_tuple
+  Full plan: development_history/V1_9_PLAN.md
+
+=== HOW TO RESUME ===
+
+  cd <repo-root>
+  git checkout bugfix/fcpp_bridge/it1
+
+  # Verify tests still pass:
+  PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -q
+  # Expected: 616 passed
+
+  # Run the worker_role_assignment example:
+  PYTHONPATH=src /usr/bin/python3 src/fcpp_bridge/examples/worker_role_assignment.py
+
+  # Check planned v1.9 work:
+  cat src/fcpp_bridge/development_history/V1_9_PLAN.md
+
+=== KEY DESIGN DECISIONS ===
+
+1. enum folding only for int/float/bool
+   IntEnum members satisfy isinstance(x, int) → fold to integer literal.
+   bool maps to 1/0 (not true/false) to preserve integer type in C++.
+   str, list, dict and other types are NOT folded → verbatim passthrough.
+
+2. constants = method.__globals__ (full module namespace)
+   Gives the visitor access to all module-level names, including IntEnum
+   classes defined in the same file as the aggregate function. No explicit
+   registration needed.
+
+3. Backward-compatible default
+   PythonAstVisitor() with no args → constants={} → no folding → all
+   existing tests and code paths unaffected.
+
+4. CALL-counter invariant still holds
+   Enum folding only affects case labels and comparison RHS values, which
+   are local-computation positions. No new primitives added; CALL counter
+   alignment is unchanged.

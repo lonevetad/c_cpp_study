@@ -19,8 +19,30 @@ It also demonstrates `bis_distance`, `sp_collection`, `nbr`, `min_hood`, and
 
 ## Scenario
 
-A heterogeneous swarm of 24 nodes operates in a disaster-response setting.
-Each node is assigned one of eight *WorkerRole* values based on its ID modulo 8:
+A heterogeneous swarm operates in a disaster-response setting.
+Swarm size is controlled by two constants in the example source:
+
+| Constant | Default | Effect |
+| -------- | ------- | ------ |
+| `FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS` | `2` | Number of full ROLE_CYCLE repetitions; `DEVICES = len(ROLE_CYCLE) * FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS` |
+| `ADDITIONAL_REPEATERS_EACH_CYCLE` | `5` | Extra `WorkerRole.REPEATER` nodes appended to every cycle; tunes relay density |
+
+`ROLE_CYCLE` is a 13-slot tuple (8 standard roles + `ADDITIONAL_REPEATERS_EACH_CYCLE`
+extra `REPEATER` entries) used to assign roles via
+`ROLE_CYCLE[node_id % len(ROLE_CYCLE)]`.  With the default values `DEVICES = 26`
+(2 × 13) and the role counts are:
+
+| Metric | Formula | Default value |
+| ------ | ------- | ------------- |
+| ENDPOINT-type nodes | `FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS × 5` | 10 |
+| RECEIVER-type nodes | `FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS × 1` | 2 |
+| REPEATER-type nodes | `FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS × (2 + ADDITIONAL_REPEATERS_EACH_CYCLE)` | 14 |
+
+Invariants satisfied: `REPEATER-type (14) > ENDPOINT-type (10) > RECEIVER-type (2)`.
+To guarantee the first invariant holds, `ADDITIONAL_REPEATERS_EACH_CYCLE` must be
+greater than 3.
+
+Each node is assigned one of eight *WorkerRole* values:
 
 | Integer | Role name | RoleCommunicationType |
 | ------- | --------- | --------------------- |
@@ -69,7 +91,7 @@ would desynchronise the counter and produce incorrect C++ behavior.
 
 | Step | Primitive | Purpose |
 | ---- | --------- | ------- |
-| 1 | `bis_distance(is_receiver, 1, 100)` | Distance gradient rooted at RECEIVER (role 1) |
+| 1 | `bis_distance(is_receiver, 1, 100)` | Distance gradient rooted at RECEIVER (WorkerRole.RECEIVER) |
 | 2 | `nbr(dist)` + `min_hood((nbr_dists, self_uid()))` | Spanning-tree parent; `self_uid()` as tie-breaker |
 | 3 | `count_hood()` | Local neighbor count (coverage metric) |
 | 4 | `sp_collection(dist, {self_uid()}, {}, union)` | Routing subtree per node |
@@ -124,18 +146,18 @@ inside `match/case` branches.
 
 ```python
 match role:
-    case 0:   # UNASSIGNED (WorkerRole.UNASSIGNED = 0)
+    case WorkerRole.UNASSIGNED.value:   # 0
         # [Placeholder] Await role assignment; passively track position.
         passive_dist = dist_to_receiver
         return WorkerState(role=role, dist_to_receiver=passive_dist,
             routing_set_size=0, received_count=0, active_procs=0)
-    case 1:   # RECEIVER (WorkerRole.RECEIVER = 1)
+    case WorkerRole.RECEIVER.value:     # 1
         # Accumulate all delivered endpoint reports.
         messages_received = len(received_log)
         return WorkerState(role=role, dist_to_receiver=0.0,
             routing_set_size=len(routing_set),
             received_count=messages_received, active_procs=len(active_messages))
-    case 2:   # LIDAR (WorkerRole.LIDAR = 2)
+    case WorkerRole.LIDAR.value:        # 2
         # Endpoint: depth/distance sensor.
         # [Placeholder] Capture depth-map frame; inject compressed scan.
         scan_coverage = neighbor_count
@@ -143,7 +165,7 @@ match role:
             routing_set_size=scan_coverage, received_count=0,
             active_procs=len(active_messages))
     …
-    case 4:   # REPEATER (WorkerRole.REPEATER = 4)
+    case WorkerRole.REPEATER.value:     # 4
         # Repeater: signal amplifier and network range extender.
         # Acts as intermediary between endpoints (or other repeaters) not in
         # direct communication; relays data frames transitively.
@@ -153,7 +175,7 @@ match role:
             routing_set_size=relay_coverage, received_count=0,
             active_procs=len(active_messages))
     …
-    case 6:   # RUBBLES_REMOVER (WorkerRole.RUBBLES_REMOVER = 6)
+    case WorkerRole.RUBBLES_REMOVER.value:  # 6
         # Endpoint: physical debris-clearing robot.
         # Gathers environmental data and injects a clearing-status report
         # into the spawn stream toward RECEIVER.
@@ -163,7 +185,7 @@ match role:
             routing_set_size=debris_coverage, received_count=0,
             active_procs=len(active_messages))
     …
-    case _:   # 7 — FLYING_OVERSEER (WorkerRole.FLYING_OVERSEER = 7)
+    case WorkerRole.FLYING_OVERSEER.value:  # 7
         # Endpoint: aerial survey drone.
         # [Placeholder] Transmit aerial survey frame; update coverage map.
         survey_footprint = len(routing_set)
@@ -234,21 +256,48 @@ and undefined behavior.
 The DSL guide (§6.7) documents this restriction: the `match/case` section should
 contain only local, non-aggregate computation.
 
-### Integer literals vs. enum member names in case patterns
+### Enum-value dotted-name patterns in case labels (v1.8.2)
 
 Python 3.10+ `match/case` distinguishes:
 - **Capture patterns** — `case NAME:` binds any value to a new local `NAME`
-- **Value patterns** — `case CLASS.ATTR:` or `case literal:` matches a specific value
+- **Value patterns** — `case a.b.c:` (any dotted name) evaluates the chain and
+  matches the resulting value; never creates a new binding
 
 Bare module-level names like `case RECEIVER:` are capture patterns and always
-match — making the switch useless.  This file uses integer literals with inline
-comments (`case 1:  # RECEIVER`) for clarity and correctness.
+match — making the switch useless.  A three-part dotted chain like
+`case WorkerRole.RECEIVER.value:` is always interpreted as a **value pattern**,
+so Python evaluates `WorkerRole.RECEIVER.value` to the integer `1` and matches
+against it.  This is the approach used in the example: no magic integer literals,
+and the enum class itself is the source of truth.
 
-### Role assignment via nid % 8
+> **Transpiler caveat:** The AST visitor currently expects integer literal
+> constants in `case` labels; `WorkerRole.X.value` produces an `Attribute` chain
+> in the AST that would require constant-folding to resolve.  The Python simulation
+> runs correctly; C++ generation of the switch body is a planned improvement.
+
+### Role assignment via ROLE_CYCLE (v1.8.1)
 
 `initial_state()` cannot access `node.uid` (the C++ device identifier).  To
-assign roles deterministically, the demo simulation sets `roles[nid] = nid % 8`
-externally before the first round.  With `DEVICES = 24` each role appears 3 times.
+assign roles deterministically, the demo simulation populates `roles[nid]` from
+`ROLE_CYCLE[nid % len(ROLE_CYCLE)]` externally before the first round.
+
+`ROLE_CYCLE` is a tuple of `WorkerRole` members with two tuning knobs:
+
+| Constant | Type | Effect on the network |
+| -------- | ---- | --------------------- |
+| `ADDITIONAL_REPEATERS_EACH_CYCLE` | `int` | Extra `WorkerRole.REPEATER` slots appended to each cycle.  Increase for denser relay coverage; keep `> 3` to ensure `REPEATER-type > ENDPOINT-type`. |
+| `FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS` | `int` | Number of full `ROLE_CYCLE` repetitions; `DEVICES = len(ROLE_CYCLE) * this`.  Scale up for larger swarms. |
+
+Formulas for derived counts (per-default `ADDITIONAL_REPEATERS_EACH_CYCLE = 5`,
+`FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS = 2`):
+
+```
+len(ROLE_CYCLE)  = 8 + ADDITIONAL_REPEATERS_EACH_CYCLE       = 13
+DEVICES          = len(ROLE_CYCLE) × FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS  = 26
+ENDPOINT-type    = FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS × 5   = 10
+RECEIVER-type    = FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS × 1   = 2
+REPEATER-type    = FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS × (2 + ADDITIONAL_REPEATERS_EACH_CYCLE)  = 14
+```
 
 In a real deployment, role assignment could be done via:
 1. **Pre-configuration** — write the role into the device's initial memory
@@ -275,7 +324,7 @@ The demo simulation has always used the real `nid` directly (it does not call
 | Receiver UID is still `0` placeholder | Spawn key `(node.uid, 0)` is unique per sender but destination is approximate | Distribute real receiver UID via `broadcast` from RECEIVER nodes |
 | `sp_collection` uses `frozenset` in Python | Generated C++ needs `std::unordered_set<device_t>` | Replace `frozenset({self_uid()})` with correct C++ type post-generation |
 | Role is static after initialization | No in-flight role changes supported | Dynamic assignment requires evolution 2 or pre-configuration |
-| Single-interval message injection per endpoint | All 12 endpoints send in the same round; congestion not modeled | Use staggered intervals or priority queues |
+| Single-interval message injection per endpoint | All 10 endpoints send in the same round; congestion not modeled (default config) | Use staggered intervals or priority queues |
 
 ---
 
@@ -361,8 +410,8 @@ The current RECEIVER role is handled by a single node per ID-class.  For
 fault-tolerance, extend the algorithm to allow any RECEIVER node to accept
 messages from any endpoint:
 
-- `is_receiver` is already defined as `role == 1` (any node with that role)
-- With `DEVICES = 24` there are already 3 RECEIVER nodes (nodes 1, 9, 17)
+- `is_receiver` is already defined as `role == WorkerRole.RECEIVER.value` (any node with that role)
+- With default constants there are `FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS` RECEIVER nodes (2 by default — one per cycle)
 - The `old()` log could be merged across all RECEIVERs via `gossip_max`
 
 ### Evolution 7: Visualization integration
@@ -425,6 +474,31 @@ network coverage and routing health.
 | `examples/_example_utils.py` | **New** — shared `report_validation(cls)` and `report_transpilation(cls)` utilities |
 | `development_history/V1_9_PLAN.md` | **New** — full gap-analysis document for v1.9 |
 | `README.md` | Added v1.8 changelog section |
+
+### v1.8.1 (ROLE_CYCLE + ROLE_COMM_TYPE bug fix)
+
+| File | Change |
+| ---- | ------ |
+| `examples/worker_role_assignment.py` | Added `ROLE_CYCLE` 13-slot tuple; `DEVICES = 26`; role assignment via `ROLE_CYCLE[nid % len(ROLE_CYCLE)]`; fixed `ROLE_COMM_TYPE` frozenset-unpack `TypeError` with dict comprehensions |
+| `development_history/PRE_V19_REFACTORING.md` | **New** — documents v1.8.1 and v1.8.2 changes |
+| `development_history/EXAMPLES_JOURNAL.md` | Updated worker_role_assignment.py notes |
+| `README.md` | Added v1.8.1 changelog row |
+
+### v1.8.2 (enum-value refactoring: no magic integers)
+
+| File | Change |
+| ---- | ------ |
+| `examples/worker_role_assignment.py` | `ROLE_CYCLE` uses `WorkerRole.X` members; guards use `.value`; `case N:` → `case WorkerRole.X.value:`; `WorkerRole(x).name` → `x.name`; `int(r)` → `r.value` in main() |
+| `development_history/PRE_V19_REFACTORING.md` | v1.8.2 section added |
+| `development_history/EXAMPLES_JOURNAL.md` | v1.8.2 notes added |
+| `README.md` | Added v1.8.2 changelog row |
+
+### v1.8.3 (named constants for swarm-size tuning)
+
+| File | Change |
+| ---- | ------ |
+| `examples/worker_role_assignment.py` | Extracted `ADDITIONAL_REPEATERS_EACH_CYCLE = 5` and `FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS = 2`; `ROLE_CYCLE` uses `*([WorkerRole.REPEATER] * ADDITIONAL_REPEATERS_EACH_CYCLE)`; `DEVICES` derived as `len(ROLE_CYCLE) * FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS` |
+| `development_history/WORKER_ROLE_ASSIGNMENT.md` | Scenario section rewritten with constant formulas; design decision section updated; case label examples updated |
 
 ### v1.9 (planned — receiver UID fix + transpiler improvements)
 

@@ -47,10 +47,15 @@ any grammar change.
 """
 
 import argparse
+import logging
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from fcpp_bridge.log import configure_bridge_logging, get_logger
+
+_log = get_logger(__name__)
 
 ANTLR_VERSION = "4.13.1"
 ANTLR_JAR_NAME = f"antlr-{ANTLR_VERSION}-complete.jar"
@@ -84,12 +89,12 @@ def _check_java() -> None:
 def _download_jar(target: Path) -> None:
     import urllib.request
 
-    print(f"Downloading {ANTLR_JAR_NAME} …")
+    _log.info("Downloading %s …", ANTLR_JAR_NAME)
     try:
         urllib.request.urlretrieve(ANTLR_DOWNLOAD_URL, target)
     except Exception as exc:
         _die(f"Download failed: {exc}\nManually download from {ANTLR_DOWNLOAD_URL}")
-    print(f"Saved to {target}")
+    _log.info("Saved to %s", target)
 
 
 def _run_antlr(jar: Path, output_dir: Path) -> None:
@@ -102,7 +107,7 @@ def _run_antlr(jar: Path, output_dir: Path) -> None:
         "-o", str(output_dir),
         str(GRAMMAR_FILE),
     ]
-    print("Running:", " ".join(cmd))
+    _log.info("Running: %s", " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.stdout:
         print(result.stdout, end="")
@@ -113,7 +118,7 @@ def _run_antlr(jar: Path, output_dir: Path) -> None:
 
 
 def _die(msg: str) -> None:
-    print(f"ERROR: {msg}", file=sys.stderr)
+    _log.error("%s", msg)
     sys.exit(1)
 
 
@@ -123,6 +128,7 @@ def _die(msg: str) -> None:
 
 
 def main() -> None:
+    configure_bridge_logging(level=logging.INFO, stream=sys.stdout)
     parser = argparse.ArgumentParser(
         prog="generate_antlr.py",
         description="Generate ANTLR4 Python3 parser stubs from AggregateProgram.g4",

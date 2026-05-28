@@ -284,3 +284,83 @@ Lastly, update the ".md" files again and save Your memory.
 Your questions have been answered: "For gap #9 (multi-swarm coordination UI): the backend (DeviceManager fleet-wide ops) is already done. What form should the frontend take?"="Allow flexible, configurable and mutliple-channel output: one or more of those options could be provided (if necessary, a proxy will forward the data received to the registered output channels; the forwarding might be sequential-and-synchronous or parallel-and-asynchronous depending on a constructor-level parameter) and the backend accepts an output channel (or the "proxy" previously mentioned: define a super-class by applying either Prototype Programming and/or Object Oriented Programming paradigms), defaulting to a plain but configurable logging system.". You can now continue with these answers in mind.
 
 
+
+
+
+
+
+I mistakenly added the frozenset-unpacking -related bug, sorry! Congratulations for spotting it and fixing it!
+
+Style-related refactoring of all examples and all files using enumerations' values, both in assignments and comparisons / match-case: use the language-specific way to refer to the enumeration entry's value (by actually using the enumeration entry and reading its ".value" in Python, and by using whatever C++ allows for C++ source files) rather than a plain constant value (integer or string), because the latter feels like a "magic-number" antipattern despite all comments.
+
+Then, update all relevant ".md" files, add a new ".md" file in "development_history" folder, include this refactoring as a pre-work which preceeded the "V1_9_plan". Then, save your memory.
+
+
+
+
+
+
+I'll manually refactored the lines 136-152 to explicit the amoun of roles cycle assignment rounds (in the constant named "FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS") and the amount of additional "repeater" nodes (in the constant named "ADDITIONAL_REPEATERS_EACH_CYCLE"). Update the "WORKER_ROLE_ASSIGNMENT.md" to account for the constants "FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS" and "ADDITIONAL_REPEATERS_EACH_CYCLE", such that a reader might tweak those constants to modify a bit the overall network shape.
+Update all other relevant ".md" files if necessary, then save your memory.
+
+
+
+
+-----------------------------------------------------
+-----------------------------------------------------
+-----------------------------------------------------
+
+
+This is a multi-steps huge process: update the relevant ".md" files and save the session memory at each step, so that this session could be resumed at any time.
+
+The "examples" folder is fairly important for developers who needs to understand how the whole project works, how the FCPP library underneath works and the theory behind it (i.e., "Field Calculus"), so this collection of examples will grow over time.
+This implies the necessity of sharing code and standards: analyze the "examples" folder and create a "examples_cohesiveness.md" file with the plan to refactor the "exercises" folder, such that repeated code and looking-alike enumerations and settings can be shared, similarly to what was performed resulting in the creation of the file "_example_utils.py".
+
+This operation is also meant to simplify the creation of the next example, which takes inspiration takes inspiration from the "worker_role_assignment" one:
+- this next example is named "communication_roles_assignment" and it's created after the execution of the aforementioned plan.
+- I will mention "future exercise" as hints for further developments: take notes of them in a separated ".md" file or section, such that future development sessions might take them into account
+- the focus of this exercise is the definition of a simple algorithm in which the nodes agree to which roles they should take in order to establish a communication from some sources to some destinations
+- the roles are similar to the ones defined inside "worker_role_assignment" (hence, one of the reason of this whole refactoring), with a renaming: the enumeration is named "CommunicationRole" and its entries are "Sender", "Repeater" and "Receiver" and "Unassigned". By default, all nodes have the "Repeater" role until they either need to have another role or are elected to have another role. 
+- future examples will handle multiple and independent communication instances (implying that a node might have a role in a communication process and a different role in another communication process; also, the "spawn" primitive might be involved in it), but the current exercise display a simpler scenario: at first, the nodes negotiate the roles and, after establishing them, they start to act like that.
+- - In particular, a "Sender" will start to send messages as soon as it can, the "Receiver" will digest message as soon as it can and the "Repeater" will take parts in the message deliverance as soon as possible.
+- the "Sender" role is equivalent to the "endpoint", while the other roles are literally the same
+- the exercise starts by placing a configurable amount of nodes (by default, 15) randomly scattered in the area, then defines a configurable amount of "sink point" (defaults to 2) and lastly defines a configurable amount of "source points" (defaults to 3)
+- the "sink points" are the point of interest of every "Receiver" node, as explained later
+- the "source points" are the point of interest of every "Sender" node, as explained later
+- in this exercise, the sum of the amounts of "sink points" plus the amount of "source points" can't exceed the amount of nodes, so a check is needed and an exception for "inconsistent configuration" might be raised if the check fails
+- the nodes won't move (i.e., no code for changing their position will be defined in this exercise), which implies that "sink points" and "source points" might be places outside the communication range of all nodes. For the sake of simplicity, the network creation and  the "sink points" and "source points" is defined as follows:
+- - the nodes are created all together, then each node's position is tested to count the amount of neighbors it might reach.
+- - if more than 20% of the nodes (a configurable threshold, which defaults to 20%) are "isolated" (i.e., the only neighbors they could reach are themselves, i.e. "nbr_count()" returns 1), then the migration is needed
+- - to migrate the "isolated" nodes, simply randomly change their location, then recalculate the list of isolated nodes (the latter functionality might need to be abstracted away into a separate function; NOTE: this function is NOT an aggregate one, because it's meant to be run just at simulation startup time)
+- - if the threshold is exceeded again, then the "migration" is applied again in a "while" loop (after logging the amount of migrations previously performed and the positions of all nodes, highlighting the "isolated" ones)
+- - if a "migration" succeeds (i.e., less than "isolation_threshold %" of the total nodes are "isolated" or a configurable maximum amount of iterations has been performed [defaults to 50], whichever happens first, to avoid infinite loops), then a map "node's ID -> reference to node's location" is defined for future uses; then, the "sink points" and "source points" are placed as follows:
+- - - for each of them, for sake of simplicity, are located by choosing a random node and defining the "sink/source point"'s location as a random point within the communication radius of that node (use that node's position and the "norm" function to calculate the geometrical distance, which is used to check if the "sink/source node" lies within the communication radius)
+- - - each node might have at most one "point" among "sink" and "source" ones within its communication radius: trace with a map each node that has already been "locked"; the map uses the node's ID as the map's key and the pair "sink/source point's position ; is_sink flag" as the value. (A list of triplets "node's ID; point's location; is_sink" might be a good alternative to the mapping: You decide which one is better) If a "sink/source point" location lies within any "already locked node", then the point's location must be recalculated in a "do-while" loop after logging that a re-attempt for the "j-th" "sink/source" point needs to be made (this relocation is considered to be succeeded after a configurable maximum amount of iterations has been performed [defaults to 10], to avoid infinite loops).
+- - - after each "sink/source" nodes are placed, then the actual simulation (of the aggregate algorithm) can start!
+- the aggregate algorithm works as follows:
+- - each node can always access to the "sink/source points" location, for the sake of simplicity (in future exercises, the nodes will also wander to look for those points, like in a realistic scenario)
+- - each node votes to decide what "CommunicationRole" they should assume, then they act accordingly to the role:
+- - - each node next to a "sink point" will have the "Receiver" role, therefore they will consume incoming messages
+- - - each node next to a "source point" will contest the "Sender" role among its neighbors (a situation that shouldn't happen, but IF it does then a resolution is needed): the closest node is the "Sender"; if there's a tie, then an election is performed (which likely results in the node with the lowest ID winning the contest). A "Sender" node will send messages towards the "Receiver" nodes using any communication algorithm (most likely, the "broadcast" since the "Receiver" nodes are not globally known)
+- - - each node that is not a "Receiver" nor a "Sender", for whatever reason, will automatically be a "Repeater" and will propagate the messages
+- - notes about the messages definition, creation and consumption:
+- - - this is an exercise, so the messages are just dummy data that are created and consumed in a dummy, demonstration-purpose only:
+- - - - a "message" is simply the "Sender" node's ID, that node's position, the "source point"'s position and a progressive integer meant to identify the message (it's just the number of time that node has created a message, therefore the "old" primitive might be useful)
+- - - - a message is created after a "message_ticks_creation_interval" amount of "ticks" are elapsed (this is a configurable amount, defaults to 10)
+- - - - a message is consumed by the "Receiver" nodes by simply logging their data; the "message consumption" function is configurable and future exercise might allow for per-node definitions, but this current exercise just define a global "message consumption function" to be configured as a simple logging function
+- - - - the "Repeater" nodes just repeat the messages to their neighbors, if any message is available (so, a check needs to be performed)
+- the "sink points" and "source points" are unchanged after the initialization process; future exercise might make them variable in time (after considerable amount of ticks, for example 35).
+- Similarly to the previous point, the nodes won't change their "CommunicationRole" (especially because the "sink/source points" are fixed and known beforehand) and don't move. Future exercises might need to partition the whole area across the network (which is a complex algorithm by itself) and then each node will need to scan their assigned area (a subsequent evolution ot that "area partition" algorithm which uses the latter one).
+
+Update all relevant ".md" files afterwards and save the memory and the session recordings such that this session can be resumed whenever it will become accidentally interrupted.
+
+
+
+Refactor the Python DSL, the transpilation, the C++ generation and all other relevant parts to allow for "match guard clause" (and other match-related functionalities that are shared between Python 3.14+ and C++14).
+Write a ".md" file under the "development_history" folder and update all relevant ".md" files. Then, update the "bridge.md" file: it might be very outdated.
+Then, save your memory.
+Then, refactor the examples by extrapolating, if possible, the "_demo_simulate()" function by applying the "algorithm pattern": an example is a class that extends a generic "AbstractExample" class which defines the common code and leave abstract function (i.e., functions with just "pass" or "return None" as body) to be defined by each example source file. Also, the list of devices must not be a constant (but nodes can be added or removed by their ID), because the exercises might simulate a dynamic environment where nodes might join the network or leave the network for whatever reason.
+Lastly, write/update relevant ".md" files and save your memory and the session. 
+
+
+

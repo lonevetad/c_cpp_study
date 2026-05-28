@@ -43,7 +43,9 @@ Endpoint roles (2, 3, 5, 6, 7): every MSG_INTERVAL rounds inject a sensor-
     RECEIVER (1) accumulates delivered messages.
 Repeater roles (0, 4): relay data between nodes; do not inject sensor data.
 
-Role assignment: ``node_id % 8`` — with DEVICES = 24, each role appears 3 times.
+Role assignment: ``ROLE_CYCLE[node_id % len(ROLE_CYCLE)]`` — 13-slot cycle,
+    DEVICES = 26 (2 full cycles).  Totals: REPEATER-type=14, ENDPOINT-type=10,
+    RECEIVER-type=2 (repeaters > endpoints > receivers).
 
 Algorithm per round (all 7 steps execute at EVERY node):
   1. bis_distance    — distance gradient rooted at RECEIVER nodes
@@ -121,9 +123,9 @@ REPEATER_ROLES = frozenset({  # → 2
 # Maps each WorkerRole to its RoleCommunicationType.
 # Determines the node's role in the data-gathering communication flow.
 ROLE_COMM_TYPE: dict = {
-    **ENDPOINT_ROLES,
+    **{r: RoleCommunicationType.ENDPOINT for r in ENDPOINT_ROLES},
     WorkerRole.RECEIVER:              RoleCommunicationType.RECEIVER,   # 1 → 1
-    **REPEATER_ROLES
+    **{r: RoleCommunicationType.REPEATER for r in REPEATER_ROLES},
 }
 
 
@@ -131,7 +133,23 @@ ROLE_COMM_TYPE: dict = {
 # Simulation constants
 # ---------------------------------------------------------------------------
 
-DEVICES = 24        # 3 full repetitions of all 8 roles
+ADDITIONAL_REPEATERS_EACH_CYCLE = 5
+
+ROLE_CYCLE = (    # total: 13-slots → 5 ENDPOINTs, 1 RECEIVER, 7 REPEATER-type (1 UNASSIGNED + (1+ADDITIONAL_REPEATERS_EACH_CYCLE) REPEATER).
+    # 8 standard roles — one of each per cycle
+    WorkerRole.UNASSIGNED,        WorkerRole.RECEIVER,
+    WorkerRole.LIDAR,             WorkerRole.INFRARED_SENSOR,
+    WorkerRole.REPEATER,          WorkerRole.TORCHLIGHT_MICROPHONE,
+    WorkerRole.RUBBLES_REMOVER,   WorkerRole.FLYING_OVERSEER,
+    # ADDITIONAL_REPEATERS_EACH_CYCLE extra WorkerRole.REPEATER nodes per assignment cycle
+    *([WorkerRole.REPEATER] * ADDITIONAL_REPEATERS_EACH_CYCLE)
+)
+
+FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS = 2
+
+DEVICES = len(ROLE_CYCLE) * FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS
+# With 2 cycles: ENDPOINTS=10, RECEIVERS=2, REPEATER-type=14 (14 > 10 and 2 < 10).
+
 COMM = 100       # communication radius
 SIDE = int(math.isqrt(DEVICES * 3000)) + 1
 HEIGHT = 80
@@ -189,10 +207,11 @@ class WorkerRoleAggregate:
     assembles the returned state.
 
     Note on Python 3.10+ match/case:
-        Case patterns must be integer literals (``case 0:``, ``case 1:``, …)
-        so that Python correctly treats them as value patterns, not capture
-        patterns.  Bare module-level names (e.g. ``case RECEIVER:``) would
-        create a new binding regardless of the existing variable's value.
+        Case patterns use dotted-name value patterns — ``case WorkerRole.X.value:``
+        chains (``a.b.c``) are always treated as value patterns in Python 3.10+,
+        never as capture patterns, so Python evaluates the attribute chain and
+        compares it to the subject.  Bare single-identifier names (``case X:``)
+        would be capture patterns; that is why they are not used here.
 
     Note on self_uid():
         self_uid() returns ``node.uid`` in generated C++ (no CALL counter).
@@ -217,13 +236,13 @@ class WorkerRoleAggregate:
         """
         role = self_state.role
 
-        is_receiver = (role == 1)   # WorkerRole.RECEIVER = 1
+        is_receiver = (role == WorkerRole.RECEIVER.value)
         is_endpoint = (
-            role == 2               # WorkerRole.LIDAR = 2
-            or role == 3            # WorkerRole.INFRARED_SENSOR = 3
-            or role == 5            # WorkerRole.TORCHLIGHT_MICROPHONE = 5
-            or role == 6            # WorkerRole.RUBBLES_REMOVER = 6
-            or role == 7            # WorkerRole.FLYING_OVERSEER = 7
+            role == WorkerRole.LIDAR.value
+            or role == WorkerRole.INFRARED_SENSOR.value
+            or role == WorkerRole.TORCHLIGHT_MICROPHONE.value
+            or role == WorkerRole.RUBBLES_REMOVER.value
+            or role == WorkerRole.FLYING_OVERSEER.value
         )
 
         # ── Step 1: BIS distance gradient rooted at RECEIVER nodes ───────────
@@ -239,7 +258,7 @@ class WorkerRoleAggregate:
 
         # ── Step 3: local neighbor count ─────────────────────────────────────
         # C++: int nc = count_hood(CALL);
-        # Used as "coverage" metric for LIDAR (2) and REPEATER (4) in step 7.
+        # Used as "coverage" metric for WorkerRole.LIDAR and WorkerRole.REPEATER in step 7.
         neighbor_count = count_hood()                          # noqa: F821
 
         # ── Step 4: routing set — subtree of node UIDs "below" this node ─────
@@ -290,11 +309,11 @@ class WorkerRoleAggregate:
         # and then assembles the WorkerState to return.
         #
         # routing_set_size is repurposed per role:
-        #   LIDAR (2), REPEATER (4) → neighbor_count  (coverage metric)
-        #   UNASSIGNED (0)          → 0               (passive, no contribution)
+        #   LIDAR, REPEATER         → neighbor_count  (coverage metric)
+        #   UNASSIGNED              → 0               (passive, no contribution)
         #   all others              → len(routing_set) (subtree size)
         match role:
-            case 0:   # UNASSIGNED (WorkerRole.UNASSIGNED = 0)
+            case WorkerRole.UNASSIGNED.value:   # UNASSIGNED
                 # No task assigned; node passively maintains distance info.
                 # [Placeholder] Real implementation: await role assignment via
                 # election or external configuration message.
@@ -306,7 +325,7 @@ class WorkerRoleAggregate:
                     received_count=0,
                     active_procs=0,
                 )
-            case 1:   # RECEIVER (WorkerRole.RECEIVER = 1)
+            case WorkerRole.RECEIVER.value:   # RECEIVER
                 # Accumulate all delivered endpoint reports into received_log.
                 # [Placeholder] Real implementation: parse each message body,
                 # tag it with arrival round, and forward to base-station storage.
@@ -318,7 +337,7 @@ class WorkerRoleAggregate:
                     received_count=messages_received,
                     active_procs=len(active_messages),
                 )
-            case 2:   # LIDAR (WorkerRole.LIDAR = 2)
+            case WorkerRole.LIDAR.value:   # LIDAR
                 # Endpoint: depth/distance sensor.
                 # [Placeholder] Real implementation: capture depth-map frame,
                 # fuse with neighbor LIDAR data, inject compressed scan into
@@ -331,7 +350,7 @@ class WorkerRoleAggregate:
                     received_count=0,
                     active_procs=len(active_messages),
                 )
-            case 3:   # INFRARED_SENSOR (WorkerRole.INFRARED_SENSOR = 3)
+            case WorkerRole.INFRARED_SENSOR.value:   # INFRARED_SENSOR
                 # Endpoint: heat-signature detector.
                 # [Placeholder] Real implementation: sample thermal readings,
                 # flag anomalies above threshold, and inject alert message into
@@ -344,7 +363,7 @@ class WorkerRoleAggregate:
                     received_count=0,
                     active_procs=len(active_messages),
                 )
-            case 4:   # REPEATER (WorkerRole.REPEATER = 4)
+            case WorkerRole.REPEATER.value:   # REPEATER
                 # Repeater: signal amplifier and network range extender.
                 # Acts as intermediary between endpoints (or other repeaters)
                 # that are not in direct communication; may relay data
@@ -359,8 +378,7 @@ class WorkerRoleAggregate:
                     received_count=0,
                     active_procs=len(active_messages),
                 )
-            # TORCHLIGHT_MICROPHONE (WorkerRole.TORCHLIGHT_MICROPHONE = 5)
-            case 5:
+            case WorkerRole.TORCHLIGHT_MICROPHONE.value:   # TORCHLIGHT_MICROPHONE
                 # Endpoint: combined audio + illumination sensor.
                 # [Placeholder] Real implementation: capture audio sample and
                 # ambient light reading; bundle into a single sensor report and
@@ -373,9 +391,9 @@ class WorkerRoleAggregate:
                     received_count=0,
                     active_procs=len(active_messages),
                 )
-            case 6:   # RUBBLES_REMOVER (WorkerRole.RUBBLES_REMOVER = 6)
+            case WorkerRole.RUBBLES_REMOVER.value:   # RUBBLES_REMOVER
                 # Endpoint: physical debris-clearing robot.
-                # Gathers environmental sensor data (debris status, path availability)
+                # Gathers environmental sensor data (debris status, path availability)L
                 # and injects a clearing-status report into the spawn stream toward
                 # RECEIVER.
                 # [Placeholder] Real implementation: sample debris sensor; encode
@@ -388,7 +406,7 @@ class WorkerRoleAggregate:
                     received_count=0,
                     active_procs=len(active_messages),
                 )
-            case _:   # 7 — FLYING_OVERSEER (WorkerRole.FLYING_OVERSEER = 7)
+            case WorkerRole.FLYING_OVERSEER.value:   # FLYING_OVERSEER
                 # Endpoint: aerial survey drone.
                 # [Placeholder] Real implementation: transmit aerial survey
                 # frame (top-down image + GPS coordinates) and update the
@@ -427,7 +445,7 @@ def _demo_simulate() -> None:
     """
     random.seed(17)
 
-    roles = {nid: nid % 8 for nid in range(DEVICES)}
+    roles = {nid: ROLE_CYCLE[nid % len(ROLE_CYCLE)] for nid in range(DEVICES)}
     positions = {
         nid: (random.uniform(0.0, SIDE), random.uniform(0.0, SIDE))
         for nid in range(DEVICES)
@@ -527,7 +545,7 @@ def _demo_simulate() -> None:
             for nid in endpoint_ids:
                 msg_key = (nid, interval_idx)  # (sender_uid, interval_index)
                 if msg_key not in in_flight and math.isfinite(distances[nid]):
-                    role_name = WorkerRole(roles[nid]).name
+                    role_name = roles[nid].name
                     sensor_reading = round(random.uniform(0.0, 100.0), 2)
                     msg_body = (
                         f"[node {nid} / {role_name}]"
@@ -549,7 +567,7 @@ def _demo_simulate() -> None:
                             distances[sender_nid] / COMM) + 1)
                         recv_log.write(
                             f"{round_num},{recv_nid},{sender_nid},"
-                            f"{WorkerRole(roles[sender_nid]).name},"
+                            f"{roles[sender_nid].name},"
                             f"{original_hops},{msg_body}\n"
                         )
                 delivered_this_round.append(msg_key)
@@ -569,19 +587,18 @@ def _demo_simulate() -> None:
         # ── Write per-node log entries ────────────────────────────────────────
         for nid in range(DEVICES):
             role = roles[nid]
-            role_name = WorkerRole(role).name
+            role_name = role.name
             dist = distances[nid]
 
             # routing_set_size: role-dependent metric (mirrors match/case step 7)
-            if role in (WorkerRole.LIDAR, WorkerRole.REPEATER):  # roles 2 and 4
+            if role in (WorkerRole.LIDAR, WorkerRole.REPEATER):
                 rs_size = neighbor_counts[nid]
-            elif role == WorkerRole.UNASSIGNED:  # role 0
+            elif role == WorkerRole.UNASSIGNED:
                 rs_size = 0
             else:
                 rs_size = len(routing_sets[nid])
 
             recv_count = (
-                # role 1
                 total_delivered[nid] if role == WorkerRole.RECEIVER else 0
             )
 
@@ -641,14 +658,14 @@ def main() -> None:
         f"({DEVICES} nodes, {NUM_ROUNDS} rounds, MSG_INTERVAL={MSG_INTERVAL})..."
     )
     role_summary = ", ".join(
-        f"{WorkerRole(r).name}×{sum(1 for nid in range(DEVICES) if nid % 8 == r)}"
+        f"{WorkerRole(r).name}×{sum(1 for nid in range(DEVICES) if ROLE_CYCLE[nid % len(ROLE_CYCLE)] == r)}"
         for r in range(8)
     )
     print(f"    Role distribution: {role_summary}")
     _demo_simulate()
 
     print("\nAlgorithm summary (7 steps — all run at every node):")
-    print("  1. bis_distance     — gradient distance to nearest RECEIVER (role 1)")
+    print("  1. bis_distance     — gradient distance to nearest RECEIVER (WorkerRole.RECEIVER)")
     print("  2. nbr + min_hood   — spanning-tree parent (self_uid() as tie-breaker)")
     print("  3. count_hood       — local neighbor count (coverage metric)")
     print(
@@ -663,13 +680,13 @@ def main() -> None:
     for r in WorkerRole:
         comm_type = ROLE_COMM_TYPE[r]
         tag = f"({comm_type.name.lower()})"
-        print(f"  case {int(r):d}: {r.name:<24s} {tag}")
+        print(f"  case {r.value}: {r.name:<24s} {tag}")
     print()
     print("RoleCommunicationType — communication role in the data-gathering flow:")
     for ct in RoleCommunicationType:
         roles_with = [r for r in WorkerRole if ROLE_COMM_TYPE[r] == ct]
-        role_str = ", ".join(f"{r.name}({int(r)})" for r in roles_with)
-        print(f"  {ct.name:<10s}({int(ct)}): {role_str}")
+        role_str = ", ".join(f"{r.name}({r.value})" for r in roles_with)
+        print(f"  {ct.name:<10s}({ct.value}): {role_str}")
     print()
     print("New in v1.6 — self_uid() primitive:")
     print("  Python DSL:  self_uid()  → 0 (placeholder)")

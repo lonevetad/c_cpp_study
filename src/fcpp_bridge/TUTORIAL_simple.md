@@ -32,6 +32,25 @@ The tutorial walks through every stage of the pipeline: Python DSL → C++ → c
 | `g++` ≥ 9 with C++14 support          | `g++ --version`                                           |
 | (Optional) `lld` linker               | Faster linking on Linux                                   |
 
+> **`PYTHONPATH` requirement**: `fcpp_bridge` is not published on PyPI — it lives
+> in `src/fcpp_bridge/` inside this repository.  Python must find the `src/`
+> directory on its module search path before any `import fcpp_bridge` will work.
+>
+> ```bash
+> # Persistent for the terminal session (run from the repository root):
+> export PYTHONPATH=/path/to/c_cpp_study/src
+>
+> # — or — inline prefix for a single command:
+> PYTHONPATH=src python src/fcpp_bridge/examples/my_script.py
+> ```
+>
+> If your working directory is `src/fcpp_bridge/`, the `src/` directory is one
+> level up (`..`):
+>
+> ```bash
+> PYTHONPATH=.. /usr/bin/python3 examples/my_script.py
+> ```
+
 > **No C++ toolchain?** Skip Steps 3-5 and run the pure-Python simulation at
 > the end of this file instead. It is algorithmically identical.
 

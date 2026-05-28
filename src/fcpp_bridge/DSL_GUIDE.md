@@ -425,10 +425,97 @@ default:
 }
 ```
 
+**IntEnum constant-folding (v1.8.4):** The transpiler resolves dotted chains like
+`WorkerRole.RECEIVER.value` to integer literals automatically, so `IntEnum` member
+values can be used directly in case patterns and comparisons:
+
+```python
+from enum import IntEnum
+
+class Mode(IntEnum):
+    IDLE = 0
+    ACTIVE = 1
+
+def compute(...):
+    match self_state:
+        case Mode.IDLE.value:     # → case 0:
+            ...
+        case Mode.ACTIVE.value:   # → case 1:
+            ...
+```
+
+**Guard clauses (v2.0):** `case X if condition:` wraps the case body in an
+`if` block.  The `break` still follows unconditionally, so a non-matching guard
+exits the switch rather than falling through:
+
+```python
+match role:
+    case Role.SENDER.value if dist < threshold:
+        inject_message()
+    case Role.RECEIVER.value:
+        collect_message()
+    case _:
+        relay()
+```
+
+Generated C++:
+
+```cpp
+switch (role) {
+case 1:
+    if ((dist < threshold)) {
+        inject_message();
+    }
+    break;
+case 3:
+    collect_message();
+    break;
+default:
+    relay();
+    break;
+}
+```
+
+**Guard expressions must not contain aggregate primitives.**  All `nbr`, `old`,
+`bis_distance`, etc. calls must appear *before* the `match` statement; guards
+may reference their results via local variables.
+
+**OR patterns (v2.0):** `case A | B | C:` maps to multiple C++ case labels
+sharing the same body (C++ fallthrough labels, valid in C++14):
+
+```python
+match comm_type:
+    case RoleCommunicationType.ENDPOINT.value | RoleCommunicationType.REPEATER.value:
+        relay = True
+    case RoleCommunicationType.RECEIVER.value:
+        relay = False
+```
+
+Generated C++:
+
+```cpp
+switch (comm_type) {
+case 0:
+case 2:
+    auto relay = true;
+    break;
+case 1:
+    auto relay = false;
+    break;
+default: break;
+}
+```
+
+OR patterns and guard clauses can be combined: `case A | B if cond:` wraps the
+shared body in an `if` block.
+
 **Restrictions:**
-- Case patterns must be integer literals or simple constant names.
-- Guard clauses (`case x if cond:`) are not supported.
-- `match` on non-integer types (strings, enums) will not generate valid C++.
+- Case patterns must resolve to integer/float literals (or be integer literals directly).
+  String or non-numeric enum values cannot be used as C++ case labels.
+- Sequence patterns (`case (x, y):`), class patterns (`case Cls(x=a):`), and
+  capture patterns (`case name:`) have no C++ switch equivalent — use `if/elif/else`.
+- Enum folding requires the enum class to be in the module globals of the
+  `compute()` function (typically satisfied by defining it at module level).
 
 ### 6.8 `break` and `continue`
 
@@ -458,6 +545,8 @@ while running:
 | `while cond: ...` | `while (cond) { ... }` | |
 | `for i in range(n): ...` | `for (int i=0; i<n; ++i) { ... }` | |
 | `match x: case v: ...` | `switch (x) { case v: ... }` | Python 3.10+ |
+| `case v if cond: ...` | `case v: if (cond) { ... }` | guard clause (v2.0) |
+| `case A \| B: ...` | `case A: case B: ...` | OR pattern, C++ fallthrough (v2.0) |
 | `break` | `break;` | |
 | `continue` | `continue;` | |
 
@@ -543,14 +632,15 @@ automatically.  For example, using `min_hood` adds
 | Limitation | Workaround |
 |-----------|------------|
 | `for` only supports `range()` | Use a `while` loop for other iterations |
-| `match/case` only supports integer literals | Use `if/elif/else` for string or enum dispatch |
+| `match/case` with non-integer-valued constants | `IntEnum.value` chains are constant-folded automatically; use `if/elif/else` for string dispatch |
+| Sequence/class/capture patterns in `match/case` | Use `if/elif/else`; no C++ switch equivalent for structural matching |
 | Variable declared in both `if` and `else` bodies may cause C++ scope errors | Declare the variable before the `if` block |
 | No type inference for local variables (all emit `auto`) | Correct in most cases; C++ deduces the type |
 | Attribute calls on arbitrary objects (`obj.method()`) pass through verbatim | Ensure the C++ object has the expected method |
 | `for x in collection:` is not supported | Use index-based `for i in range(len(...)):` |
 | `ActivePingStrategy` requires a C++ ping responder on physical nodes | Implement the ping endpoint on device firmware |
 | `self_uid()` returns `0` in Python (placeholder) | Use the real `nid` in demo simulations; generated C++ uses `node.uid` correctly |
-| FCPP primitives inside `match/case` branches desync CALL counter | Place all primitives before the `match/case`; only local expressions inside cases |
+| FCPP primitives inside `match/case` guards or bodies desync CALL counter | Place all primitives before the `match/case`; only local expressions inside cases and guards |
 
 ---
 
