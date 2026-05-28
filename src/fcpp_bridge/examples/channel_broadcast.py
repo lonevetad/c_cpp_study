@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fcpp_bridge.python_dsl import aggregate_function, Neighborhood
-from fcpp_bridge.python_dsl.validators import AggregateValidator
+from examples._example_utils import report_validation, report_transpilation
 
 try:
     from fcpp_bridge.transpiler import Transpiler
@@ -304,22 +304,13 @@ def main() -> None:
 
     print("[1/3] Validating Python DSL...")
     try:
-        warnings = AggregateValidator.validate(ChannelBroadcastAggregate)
-        print(f"    OK — {len(warnings)} warning(s)")
+        report_validation(ChannelBroadcastAggregate)
     except Exception as exc:
         print(f"    FAIL: {exc}")
         return
 
     print("\n[2/3] Transpiling to C++...")
-    if _PIPELINE_AVAILABLE:
-        try:
-            t = Transpiler(ChannelBroadcastAggregate)
-            cpp = t.generate()
-            print(f"    OK — {len(cpp)} bytes of C++ generated")
-        except Exception as exc:
-            print(f"    FAIL: {exc}")
-    else:
-        print("    (transpiler not available in this environment)")
+    report_transpilation(ChannelBroadcastAggregate)
 
     print("\n[3/3] Running demo simulation and writing per-node logs...")
     print(f"    Nodes: {DEVICES}  |  Rounds: {NUM_ROUNDS}")

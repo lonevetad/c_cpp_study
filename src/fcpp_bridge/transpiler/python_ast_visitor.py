@@ -81,6 +81,10 @@ class PythonAstVisitor(ast.NodeVisitor):
                     return f"{func_name}(CALL, {', '.join(args)})"
                 return f"{func_name}(CALL)"
 
+            if func_name == "self_uid":
+                # self_uid() → node.uid (direct field access; no CALL counter)
+                return "node.uid"
+
             if func_name == "max":
                 return f"std::max({', '.join(args)})"
             elif func_name == "min":

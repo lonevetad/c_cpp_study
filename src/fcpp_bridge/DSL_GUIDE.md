@@ -138,6 +138,7 @@ The transpiler wraps them with `CALL` automatically.
 | `old(value)` | `old(CALL, value)` | Value from the previous round |
 | `nbr_uid()` | `nbr_uid(CALL)` | Unique ID of each neighbor |
 | `oldnbr(x, op)` | `oldnbr(CALL, x, op)` | Combination of old and nbr |
+| `self_uid()` | `node.uid` | **This** device's unique identifier (no CALL counter — safe inside branches) |
 
 ### Hood reductions
 
@@ -548,6 +549,8 @@ automatically.  For example, using `min_hood` adds
 | Attribute calls on arbitrary objects (`obj.method()`) pass through verbatim | Ensure the C++ object has the expected method |
 | `for x in collection:` is not supported | Use index-based `for i in range(len(...)):` |
 | `ActivePingStrategy` requires a C++ ping responder on physical nodes | Implement the ping endpoint on device firmware |
+| `self_uid()` returns `0` in Python (placeholder) | Use the real `nid` in demo simulations; generated C++ uses `node.uid` correctly |
+| FCPP primitives inside `match/case` branches desync CALL counter | Place all primitives before the `match/case`; only local expressions inside cases |
 
 ---
 

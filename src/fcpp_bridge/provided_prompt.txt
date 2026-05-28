@@ -176,3 +176,111 @@ Write a ".md" file explaining in detail how to use the Python DSL to write the a
 Then, update your memory
 
 
+
+-----------------------------------------------------
+-----------------------------------------------------
+
+
+
+If I would follow the 'TUTORIAL' '.md' files' instructions, would I be able to manually run a test or a custom test/exercise?
+
+...
+
+Yes, add that note, thanks. Also, for debugging purposes, I want each steps of the bridge to be run individually: I don't want to run again, for example, the 'transpilation & writing C++ sources' again if I have already did them previously, because I would loke to jump ahead to the very next step. To do so, Add an optional command line argument that specify which steps run (a list of) OR to resume the process from a particular step. Update the '.md' files accordingly, in particular the README and the tutorial.
+
+
+
+-----------------------------------------------------
+-----------------------------------------------------
+
+
+( potrebbe tornare utile leggere "development_history/session_recovered_2026-05-28.txt" )
+
+->
+
+** Request 1** (from previous session's continuation): Add a note to `TUTORIAL_simple.md` explaining what works without a C++ toolchain vs. what requires FCPP headers. The user confirmed this after I diagnosed that steps 1–3 (validate, transpile, write C++) work immediately but steps 4–7 (compile, run, IPC) require FCPP headers and `g++`.
+
+**Request 2**: "For debugging purposes, I want each steps of the bridge to be run individually: I don't want to run again, for example, the 'transpilation & writing C++ sources' again if I have already did them previously, because I would like to jump ahead to the very next step. To do so, Add an optional command line argument that specify which steps run (a list of) OR to resume the process from a particular step. Update the '.md' files accordingly, in particular the README and the tutorial."
+
+
+
+
+-----------------------------------------------------
+-----------------------------------------------------
+
+
+
+Here follows a hughe task, with multiple substeps and that might be performed by leveraging parallel agents.
+
+Inside the "fcpp_bridge" folder, there's a folder named "examples" that contains (as the name suggests) some examples of usage of the "fcpp Python to C++ bridge". Add some examples that includes the usa of C++ grammar within the "Python DSL" side; in particular, add one example including a "switch" statement where the nodes' ID are used to define a "WorkerRole" (which is an enumeration of at least 4 roles, for example: "unassigned", "receiver", "lidar", "infrared_sensor", "ripetitor", "torchlight_microphone", "rubbles_remover" and "flying_overseer") role to assign to each node, maybe using the "spawn" primitive to transmit a "message" from an "endpoint" ("lidar, "infrared_sensor", "torchlight_microphone" and "flying overseer" are "endpoint" roles) to a "receiver" (the "receiver" WorkerRole is a receiver, as the name suggests) every 10 seconds containing both the node's ID and "I found something" as body of that "messdage".
+Then write a ".md" file inside the folder named "development_history" about this example and its possible later evolutions.
+Then, update your memory
+
+
+
+
+
+
+Write a "node_uid__placeholder_flagging.md" file under the folder named "development_history" (add a uman-readable ISO timestamp at the top of the file) explaining in details "things you'll carry foward": the whole "node.uid placeholder" topic, the whole "CALL-counter alignment constraint" topic and the whole "any other spots where the DSL simplifies away real C++ API details" topic.
+Thanks
+worker_role_assignment
+
+
+
+
+Multi-step process (save your memory in between because the session limit might be reached during this process exdecution):
+
+First of all, modify the transpiler (and everything else as needed) to expose a `self_uid()` DSL primitive that wraps C++'s `node.uid`: this refactoring is reported inside the "WORKER_ROLE_ASSIGNMENT.md" file and I, the developer, have missed this issue during code review; this refactoring is likely very wide but necessary. Update all relevant ".md" files accordingly. Then, save your memory
+
+Secondly, update the "worker_role_assignment" Python file under the folder "examples" (and its related "WORKER_ROLE_ASSIGNMENT.md" under the folder "development_history") such that:
+- every enumerations and their usages have comments that allows humans to check the used integer numbers (which are the enumeration entries' values) to the respective enumeration entry's name
+- in that "WORKER_ROLE_ASSIGNMENT.md" there is the following note: "The `match/case` in step 7 contains **only local expressions** (no primitive calls) and is therefore safe to use as a per-role customization point."; refactor that "step 7" (and the relevant documentations too) to reflect the actual Role's tasks. Take into account that this whole Python file is an exercise, so a Role's task without an actual, non-placeholder implementation might just be a dummy logging acting as a placeholder for the real-world implementation (which is not and can't be provided in this example).
+
+Lastly, update all untouched relevant ".md" files, if necessary, and save your memory.
+
+
+
+
+
+
+I forgot an important aspect of the exercise "worker_role_assignment" and some fixes (which are listed in a markdown-alike style):
+- the "ripetitor" is a typo: fix it with the correct English word "repeater"
+- the example is representing a toy-example of a swarm that the Civil Protection might deploy in real-world scenarios: the "WorkerRole" enumeration lists a simplified list of actual roles a device might have. In particular:
+- - every role has a "RoleCommunicationType" associated with it (which is a different enumeration) that can be "endpoint", "receiver" and "repeater". These types of roles represent the final purposes a "WorkerRole" fulfills within the communication flow. That communication flow takes inspiration from "channel" -alike algorithms (like "channel_broadcast", "chain_decaying", "gossip_dispatch" and "spreading_collection", or even the IPv4 and IPv6 protocols), and has the following details:
+- - - "endpoint": a device whose "WorkerRole" is an "endpoint" is meant to gather some data from its environments (the actual implementation of the data gathering depends of the real-world scenario and device, so use dummy placeholders like logging functions and a random number to simulate an "endpoint" doing its job) and send it to the "receiver";
+- - - "receiver": a device whose "WorkerRole" is a "receiver" is likely a working station or a human professional (so its physical position likely never changes) who just need to receive the data from the "endpoint" and save it (for example: logging these data);
+- - - "repeater": a device whose "WorkerRole" is a "repeater" acts as an intermediary between any "endpoint" (even multiple ones at the same time) and any "repeater" (even multiple ones) that are not in direct communication; a "repeater" might transitively transmit some data or some messages to other "repeater"s, similarly to the already-implemented primitives related with messages transmission
+- - the roles "lidar, "infrared_sensor", "torchlight_microphone" and "flying overseer" all have the "endpoint" "RoleCommunicationType"
+- - the role "receiver" has the "receiver" "RoleCommunicationType", as the name suggests
+- - the role "repeater" has the "repeater" "RoleCommunicationType", as the name suggests
+So, refactor the "worker_role_assignment" exercise accordingly, then update all relevant ".md" files.
+Save your memory at each step to allow for precise session recovery: a session suspension due to "limit reached" might happen.
+
+---
+
+Before I start, two roles are unspecified in the RoleCommunicationType mapping: UNASSIGNED (0) and RUBBLES_REMOVER (6). The user's description only covers LIDAR/INFRARED_SENSOR/TORCHLIGHT_MICROPHONE/FLYING_OVERSEER (endpoint), RECEIVER (receiver), and REPEATER (repeater).
+Your questions have been answered: "What RoleCommunicationType should UNASSIGNED (0) have?"="repeater (default)", "What RoleCommunicationType should RUBBLES_REMOVER (6) have?"="endpoint". You can now continue with these answers in mind.
+
+
+
+
+
+Create a plan for a v1.9 version (or the "next in line" version) of the development phase, proposing solutions to the following "known gaps" (not all gaps are listed there), saving Your memory for precise context resume after each step.
+1) why the "Receiver UID placeholder" isn't broadcasting the UID i the "worker_role_assignment" example? Why it's needed in the first place? Why "broadcast" might be the solution rather than other solutions (like, for example: "channel_broadcast")?
+2) can't "set_t{node.uid}" actually be produced during transpilation? Also, is "set_t" the actual type or sould it be "std::set<device_t>{node.uid}"?
+3) What actions are needed to perform the "min_hood with tuple" refactoring?
+4) Couldn't we use a "node_uid()" function call (adequately transpiled to "node.uid", depending on the actual transpilation process) to fill that gap?
+6) What actions are needed to perform the  "ActivePingStrategy incomplete" refactoring? 
+7) What is missing in the "DeviceManager.accept_registrations(port)" gap? What actions are needed to perform that refactoring?
+8) "PhysicalNode exception handling" isn't there any C++14 functionality (eventually implemented in later versions of C++) allowing "close()" function call to be performed after the exception handling? If so, then refactor and implement it.
+9) What could be missing to visualize the "multi-swarm coordination UI"? Is an actual GUI/frontend required? If so, then acknowledge that and just provide an "output consumer" if not needed (ask me, the Developer, before performing that refactoring).
+Update all relevant ".md" files for both journaling (use the "development_history" folder accordingly when needed).
+
+After all of that and saving Your memory, refactor all "print" function invocation with configurable modern standard logging systems (defaulting to "printing to standard output" ).
+Then, avoid repeating code upon logging warnings after validations steps by refactoring that logging into a reusable and flexible code.
+Lastly, update the ".md" files again and save Your memory.
+
+--->
+Your questions have been answered: "For gap #9 (multi-swarm coordination UI): the backend (DeviceManager fleet-wide ops) is already done. What form should the frontend take?"="Allow flexible, configurable and mutliple-channel output: one or more of those options could be provided (if necessary, a proxy will forward the data received to the registered output channels; the forwarding might be sequential-and-synchronous or parallel-and-asynchronous depending on a constructor-level parameter) and the backend accepts an output channel (or the "proxy" previously mentioned: define a super-class by applying either Prototype Programming and/or Object Oriented Programming paradigms), defaulting to a plain but configurable logging system.". You can now continue with these answers in mind.
+
+

@@ -22,6 +22,7 @@ from .abf_distance import AbfDistance
 from .rectangle_walk import RectangleWalk
 from .follow_target import FollowTarget
 from .nbr_uid import NbrUid
+from .self_uid import SelfUid
 from .old_nbr import OldNbr
 from .align import Align
 from .align_inplace import AlignInplace
@@ -93,6 +94,7 @@ __all__ = [
     "RectangleWalk",
     "FollowTarget",
     "NbrUid",
+    "SelfUid",
     "OldNbr",
     "Align",
     "AlignInplace",

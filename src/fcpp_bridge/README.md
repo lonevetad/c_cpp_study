@@ -7,7 +7,7 @@ Production-ready bridge between Python and FCPP (Field Calculus C++14 framework)
 ```bash
 cd <repo-root>
 PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -v
-# 610 pass, 0 fail
+# 611 pass, 0 fail
 ```
 
 ## Overview
@@ -40,8 +40,12 @@ PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/test
 | v1.2  | Physical device deployment                | ✅ Done | +32 PhysicalNode, +8 DeviceManager |
 | v1.3  | Pluggable liveness strategies             | ✅ Done | +23                                |
 | v1.4  | C++-alike DSL control flow + per-step CLI | ✅ Done | +32                                |
+| v1.5  | worker_role_assignment.py example (match/case + spawn) | ✅ Done | +0 |
+| v1.6  | `self_uid()` primitive (→ `node.uid`); enum comments; step 7 role tasks | ✅ Done | +1 |
+| v1.7  | `RoleCommunicationType` enum; `RIPETITOR`→`REPEATER`; `RUBBLES_REMOVER`→endpoint | ✅ Done | +0 |
+| v1.8  | Logging refactor: library `print()` → `get_logger()`; `_example_utils` validation helper; v1.9 gap-analysis plan | ✅ Done | +0 |
 
-**Total: 610 tests — 610 pass, 0 fail.**
+**Total: 611 tests — 611 pass, 0 fail.**
 
 ## Architecture
 
@@ -134,9 +138,10 @@ fcpp_bridge/
 ## Examples
 
 The `examples/` directory contains Python ports of real FCPP C++ algorithms from
-`fcpp-sample-project` and `fcpp-exercises`, written for demonstration and learning.
-Each file defines an `@aggregate_function` class (transpilable to C++) and a pure-Python
-`_demo_simulate()` that runs the algorithm and writes per-node log files to `examples/logs/`.
+`fcpp-sample-project` and `fcpp-exercises`, plus original DSL-showcase examples, written
+for demonstration and learning.  Each file defines an `@aggregate_function` class
+(transpilable to C++) and a pure-Python `_demo_simulate()` that runs the algorithm and
+writes per-node log files to `examples/logs/`.
 
 Run any example:
 
@@ -162,11 +167,12 @@ See `TUTORIAL_simple.md §Running individual steps` for the full flag reference.
 
 | Python file               | C++ source                                         | Key FCPP primitives                                                                                |
 | ------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `spreading_collection.py` | `fcpp-sample-project/lib/spreading_collection.hpp` | `rectangle_walk`, `abf_distance`, `mp_collection`, `broadcast`                                     |
-| `channel_broadcast.py`    | `fcpp-sample-project/lib/channel_broadcast.hpp`    | `rectangle_walk`, `bis_distance`, `broadcast`                                                      |
-| `collection_compare.py`   | `fcpp-sample-project/lib/collection_compare.hpp`   | `rectangle_walk`, `abf_distance`, `sp_collection`, `mp_collection`, `wmp_collection`, `count_hood` |
-| `message_dispatch.py`     | `fcpp-sample-project/lib/message_dispatch.hpp`     | `rectangle_walk`, `bis_distance`, `nbr`, `min_hood`, `sp_collection`, `spawn`, `old`               |
-| `chain_decaying.py`       | `fcpp-sample-project/run/chain_decaying.hpp`       | `nbr`, `min_hood`                                                                                  |
+| `spreading_collection.py`    | `fcpp-sample-project/lib/spreading_collection.hpp` | `rectangle_walk`, `abf_distance`, `mp_collection`, `broadcast`                                            |
+| `channel_broadcast.py`       | `fcpp-sample-project/lib/channel_broadcast.hpp`    | `rectangle_walk`, `bis_distance`, `broadcast`                                                             |
+| `collection_compare.py`      | `fcpp-sample-project/lib/collection_compare.hpp`   | `rectangle_walk`, `abf_distance`, `sp_collection`, `mp_collection`, `wmp_collection`, `count_hood`        |
+| `message_dispatch.py`        | `fcpp-sample-project/lib/message_dispatch.hpp`     | `rectangle_walk`, `bis_distance`, `nbr`, `min_hood`, `sp_collection`, `spawn`, `old`                     |
+| `chain_decaying.py`          | `fcpp-sample-project/run/chain_decaying.hpp`       | `nbr`, `min_hood`                                                                                         |
+| `worker_role_assignment.py`  | **original** — v1.5/v1.6/v1.7 DSL showcase        | `bis_distance`, `nbr`, `min_hood`, `count_hood`, `sp_collection`, `spawn`, `old`, `self_uid()` + `match/case` switch + `RoleCommunicationType` |
 
 See [EXAMPLES_JOURNAL.md](EXAMPLES_JOURNAL.md) for the full algorithm notes, source inventory,
 and resume instructions.
@@ -181,6 +187,7 @@ and resume instructions.
 - **[DSL_GUIDE.md](DSL_GUIDE.md)** — Complete Python DSL reference: primitives, types, mixins, C++-alike grammar (if/while/for/match→switch), transpilation pipeline, limitations, full examples
 - **[TUTORIAL_simple.md](TUTORIAL_simple.md)** — Beginner tutorial: 20-node hop-channel (BIS + nbr/min_hood + broadcast); per-step CLI
 - **[TUTORIAL_in_depth.md](TUTORIAL_in_depth.md)** — Production tutorial: custom class, listener proxy, node management, heartbeat
+- **[WORKER_ROLE_ASSIGNMENT.md](development_history/WORKER_ROLE_ASSIGNMENT.md)** — Design notes for the `worker_role_assignment.py` example: algorithm walkthrough, DSL feature decisions, 7 evolution paths
 - **[PHYSICAL_DEPLOYMENT.md](PHYSICAL_DEPLOYMENT.md)** — v1.2: analysis, design decisions, and changes for physical device deployment support
 - **[PHYSICAL_DEPLOYMENT_JOURNAL.md](PHYSICAL_DEPLOYMENT_JOURNAL.md)** — v1.2: step-by-step status tracker and architecture diagram
 
@@ -217,6 +224,74 @@ and resume instructions.
 
 - Phase 7: Multi-swarm coordination UI
 - Phase 7: Run `generate_antlr.py --download` to activate the ANTLR4 parser path (requires Java 11+)
+
+## v1.8 — Logging refactor + v1.9 gap-analysis plan
+
+- **Library `print()` → `get_logger()`**: all status/diagnostic `print()` calls in
+  library code replaced with the `fcpp_bridge.log` infrastructure (`get_logger(__name__)`).
+  Affected files: `compiler/compiler_core.py`, `ipc/swarm_process.py`,
+  `ipc/physical_node.py`, `ipc/device_manager.py`, `runtime/runtime_generator.py`.
+  `visualization/text_dashboard.py` intentionally unchanged (its output IS the
+  visualizer output). `grammar/generate_antlr.py` intentionally unchanged (CLI tool).
+- **`examples/_example_utils.py`** — new shared utility module with `report_validation(cls)`
+  and `report_transpilation(cls)` helpers.  Every example's `main()` now delegates the
+  validate+transpile boilerplate to these helpers, eliminating 5+ copies of the same
+  `try/except + for w in warnings` block.  Examples updated: `spreading_collection.py`,
+  `channel_broadcast.py`, `message_dispatch.py`, `chain_decaying.py`,
+  `collection_compare.py`, `worker_role_assignment.py`.
+- **`development_history/V1_9_PLAN.md`** — full v1.9 gap-analysis document covering:
+  Gap #1 (receiver UID: why `broadcast` is the solution), Gap #2 (`set_t{node.uid}`
+  transpilation), Gap #3 (`min_hood` tuple → `std::make_tuple`), Gap #4 (`nbr_uid()`
+  vs `self_uid()` distinction), Gap #6 (`ActivePingStrategy` C++ ping handler),
+  Gap #7 (`DeviceManager.accept_registrations`), Gap #8 (`PhysicalNode` RAII-style
+  exception cleanup), Gap #9 (`OutputChannel` multi-channel output design with
+  OOP/Prototype hierarchy).
+- **No new tests** — test count remains 611.  The library refactor is
+  transparent: callers who have not called `configure_bridge_logging()` see no output
+  at all (NullHandler default); callers who opt in get structured log records instead
+  of bare prints.
+
+## v1.7 — RoleCommunicationType + REPEATER rename + RUBBLES_REMOVER as endpoint
+
+- **`examples/worker_role_assignment.py`**:
+  - Renamed `RIPETITOR` → `REPEATER` (corrected spelling/English).
+  - Added `RoleCommunicationType(IntEnum)` — ENDPOINT(0), RECEIVER(1), REPEATER(2) — and
+    `ROLE_COMM_TYPE` dict mapping each `WorkerRole` to its communication role.
+  - Reclassified `RUBBLES_REMOVER` (6) as ENDPOINT: it now injects sensor-reading messages
+    toward RECEIVER via spawn.
+  - Reclassified `UNASSIGNED` (0) as REPEATER (passive relay candidate).
+  - Updated `ENDPOINT_ROLES` (added role 6), replaced `RELAY_ROLES` with `REPEATER_ROLES`.
+  - Demo simulation generates random sensor readings in endpoint messages.
+- **No transpiler changes** — `RoleCommunicationType` is Python-only metadata; the DSL
+  `compute()` logic drives C++ behavior via `is_endpoint`/`is_receiver` booleans.
+- **No new tests** — test count remains 611.
+
+## v1.6 — self_uid() primitive + worker_role_assignment refactor
+
+- **`python_dsl/primitives/self_uid.py`** — new `SelfUid` primitive; `self_uid()` in Python DSL
+  transpiles to `node.uid` in C++ (direct node-field access, **no CALL counter**).
+  Safe to call inside `match/case` branches or `if/else` arms.
+  In the Python execution layer `self_uid()` returns `0` (placeholder); generated C++ is correct.
+- **`transpiler/python_ast_visitor.py`** — `self_uid()` special case added before the built-in
+  fallthrough: emits `node.uid`, never adds `CALL`.
+- **`examples/worker_role_assignment.py`** — updated to use `self_uid()` in steps 2 (tie-breaker),
+  4 (`sp_collection` local value), and 5 (spawn key sender); `WorkerRole` enum entries annotated
+  with `# N — description`; step 7 `match/case` refactored so each case includes a role-specific
+  task description (or a clearly marked placeholder for real-world implementation).
+- **`development_history/WORKER_ROLE_ASSIGNMENT.md`** — documentation updated to match code.
+- **1 new test** — `test_ast_visitor_self_uid` in `tests/transpiler/test_python_ast_visitor.py`.
+
+## v1.5 — Worker Role Assignment example (DSL showcase)
+
+- **`examples/worker_role_assignment.py`** — original (non-ported) example; 24-node disaster-response
+  swarm with 8 `WorkerRole` values (UNASSIGNED, RECEIVER, LIDAR, INFRARED_SENSOR, REPEATER,
+  TORCHLIGHT_MICROPHONE, RUBBLES_REMOVER, FLYING_OVERSEER).  Demonstrates `match/case` → C++ `switch`
+  and `spawn`-based message routing from endpoint sensor nodes to RECEIVER nodes every 10 rounds.
+- All 7 aggregate primitives (`bis_distance`, `nbr`, `min_hood`, `count_hood`, `sp_collection`,
+  `spawn`, `old`) called before the `match/case` — required by FCPP's CALL-counter alignment.
+- **`development_history/WORKER_ROLE_ASSIGNMENT.md`** — algorithm design notes, DSL feature rationale,
+  `node.uid` placeholder explanation, 7 evolution paths (dynamic election, hierarchical relay tiers,
+  message TTL, multi-receiver redundancy, visualization integration).
 
 ## v1.4 — C++-alike DSL control flow + per-step pipeline CLI
 

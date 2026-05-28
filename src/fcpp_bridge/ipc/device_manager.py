@@ -5,6 +5,9 @@ from ._ipc_node_base import _IpcNodeBase
 from .swarm_process import SwarmProcess
 from .physical_node import PhysicalNode
 from .liveness_strategy import LivenessStrategy
+from fcpp_bridge.log import get_logger
+
+_log = get_logger(__name__)
 
 
 class DeviceManager:
@@ -140,7 +143,7 @@ class DeviceManager:
             try:
                 device.start()
             except Exception as exc:
-                print(f"[DeviceManager] Failed to start '{name}': {exc}")
+                _log.warning("Failed to start '%s': %s", name, exc)
 
     def connect_all(self) -> None:
         """Connect to all registered physical devices (skips SwarmProcess entries)."""
@@ -150,7 +153,7 @@ class DeviceManager:
             try:
                 device.connect()
             except Exception as exc:
-                print(f"[DeviceManager] Failed to connect to '{name}': {exc}")
+                _log.warning("Failed to connect to '%s': %s", name, exc)
 
     def close(self, name: str) -> None:
         """Close a single named device."""
@@ -162,7 +165,7 @@ class DeviceManager:
             try:
                 device.close()
             except Exception as exc:
-                print(f"[DeviceManager] Error closing '{name}': {exc}")
+                _log.warning("Error closing '%s': %s", name, exc)
 
     # ------------------------------------------------------------------
     # Fleet-wide operations
@@ -195,7 +198,7 @@ class DeviceManager:
             try:
                 device.step()
             except Exception as exc:
-                print(f"[DeviceManager] step failed for '{name}': {exc}")
+                _log.warning("step failed for '%s': %s", name, exc)
 
     def get_all_states(self) -> Dict[str, Any]:
         """Get current state from every connected device."""

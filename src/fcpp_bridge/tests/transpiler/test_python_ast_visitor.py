@@ -65,6 +65,15 @@ def test_ast_visitor_function_calls():
     assert "std::min" in v.visit(ast.parse("min(x, y)").body[0].value)
 
 
+def test_ast_visitor_self_uid():
+    """self_uid() → node.uid (no CALL counter)."""
+    v = PythonAstVisitor()
+    result = v.visit(ast.parse("self_uid()").body[0].value)
+    assert result == "node.uid"
+    assert "CALL" not in result
+    assert "self_uid" not in result
+
+
 def test_ast_visitor_constants():
     v = PythonAstVisitor()
     assert "42" in v.visit(ast.parse("42").body[0].value)

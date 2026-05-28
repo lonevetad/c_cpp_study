@@ -24,6 +24,7 @@ from .primitives import (
     FollowTarget,
     # basics.hpp
     NbrUid,
+    SelfUid,
     OldNbr,
     Align,
     AlignInplace,
@@ -128,7 +129,7 @@ __all__ = [
     "Gossip", "SpCollection", "MpCollection", "WmpCollection",
     "BisDistance", "AbfDistance", "RectangleWalk", "FollowTarget",
     # basics.hpp
-    "NbrUid", "OldNbr", "Align", "AlignInplace", "ModOther", "Split",
+    "NbrUid", "SelfUid", "OldNbr", "Align", "AlignInplace", "ModOther", "Split",
     # utils.hpp
     "SumHood", "MeanHood", "AllHood", "AnyHood", "ListHood",
     # spreading.hpp

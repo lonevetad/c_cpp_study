@@ -8,6 +8,9 @@ from typing import Dict, List, Optional
 from .compilation_error import CompilationError
 from .compilation_result import CompilationResult
 from .program_cache import ProgramCache
+from fcpp_bridge.log import get_logger
+
+_log = get_logger(__name__)
 
 
 class Compiler:
@@ -144,7 +147,7 @@ class Compiler:
         """Get cached binary, or compile if not cached."""
         cached = self.cache.lookup(cpp_code)
         if cached and cached.exists():
-            print(f"[Compiler] Cache hit: {cached}")
+            _log.debug("Cache hit: %s", cached)
             return cached
 
         cache_key = self.cache.get_key(cpp_code)
@@ -152,22 +155,22 @@ class Compiler:
         binary_path = self.cache_dir / f"{program_name}_{cache_key}"
 
         cpp_file.write_text(cpp_code)
-        print(f"[Compiler] Generated: {cpp_file}")
+        _log.info("Generated: %s", cpp_file)
 
-        print(f"[Compiler] Compiling {cpp_file}...")
+        _log.info("Compiling %s ...", cpp_file)
         result = self.compile(cpp_file, binary_path)
 
         if not result.success:
-            print(f"[Compiler] Compilation failed:")
+            _log.error("Compilation failed")
             if result.stderr:
-                print(f"  stderr: {result.stderr[:500]}")
+                _log.error("  stderr: %s", result.stderr[:500])
             if result.stdout:
-                print(f"  stdout: {result.stdout[:500]}")
+                _log.error("  stdout: %s", result.stdout[:500])
             raise CompilationError(
                 f"Compilation failed: {result.stderr or result.stdout}"
             )
 
-        print(f"[Compiler] Success: {binary_path} ({result.compile_time_seconds:.2f}s)")
+        _log.info("Success: %s (%.2fs)", binary_path, result.compile_time_seconds)
 
         self.cache.store(cpp_code, binary_path)
 
@@ -180,7 +183,7 @@ class Compiler:
                 f.unlink()
         self.cache.manifest.clear()
         self.cache._save_manifest()
-        print("[Compiler] Cache cleared")
+        _log.info("Cache cleared")
 
     def get_cache_stats(self) -> Dict[str, int]:
         """Get cache statistics."""

@@ -12,6 +12,9 @@ from .swarm_snapshot import SwarmSnapshot
 from .updates_listener import UpdatesListener
 from .liveness_strategy import LivenessStrategy
 from ._ipc_node_base import _IpcNodeBase
+from fcpp_bridge.log import get_logger
+
+_log = get_logger(__name__)
 
 
 class SwarmProcess(_IpcNodeBase):
@@ -91,7 +94,7 @@ class SwarmProcess(_IpcNodeBase):
         if not self.binary_path.exists():
             raise FileNotFoundError(f"Binary not found: {self.binary_path}")
 
-        print(f"[SwarmProcess] Starting {self.binary_path}")
+        _log.info("Starting %s", self.binary_path)
 
         try:
             self.process = subprocess.Popen(
@@ -123,7 +126,7 @@ class SwarmProcess(_IpcNodeBase):
         else:
             raise ValueError(f"Unknown IPC backend: {self.ipc_backend_name}")
 
-        print(f"[SwarmProcess] Connected via {self.ipc_backend_name}")
+        _log.info("Connected via %s", self.ipc_backend_name)
 
     def close(self) -> None:
         """Stop swarm subprocess and cleanup."""
@@ -137,7 +140,7 @@ class SwarmProcess(_IpcNodeBase):
                 self.process.kill()
             self.process = None
 
-        print("[SwarmProcess] Closed")
+        _log.info("Closed")
 
     # ------------------------------------------------------------------
     # Core IPC operations

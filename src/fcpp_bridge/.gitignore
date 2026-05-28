@@ -38,3 +38,6 @@ fcpp_clone_GITIGNORE_ME/
 # ANTLR generated stubs (regenerate with grammar/generate_antlr.py --download)
 grammar/__antlr_gen/
 grammar/antlr-*.jar
+
+# runtime
+*.log

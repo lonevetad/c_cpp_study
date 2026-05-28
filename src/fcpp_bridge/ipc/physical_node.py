@@ -7,6 +7,9 @@ from .swarm_snapshot import SwarmSnapshot
 from .updates_listener import UpdatesListener
 from .liveness_strategy import LivenessStrategy
 from ._ipc_node_base import _IpcNodeBase
+from fcpp_bridge.log import get_logger
+
+_log = get_logger(__name__)
 
 
 class PhysicalNode(_IpcNodeBase):
@@ -98,7 +101,7 @@ class PhysicalNode(_IpcNodeBase):
 
         self.backend.subscribe_state_updates(self._dispatch_update)
         self._connected = True
-        print(f"[PhysicalNode] Connected to {self.host}:{self.port} via {self.backend_type}")
+        _log.info("Connected to %s:%s via %s", self.host, self.port, self.backend_type)
 
     def close(self) -> None:
         """Disconnect from the device (the physical device keeps running).
@@ -108,7 +111,7 @@ class PhysicalNode(_IpcNodeBase):
         self.stop_auto_reconnect()
         super().close()
         self._connected = False
-        print(f"[PhysicalNode] Disconnected from {self.host}:{self.port}")
+        _log.info("Disconnected from %s:%s", self.host, self.port)
 
     @property
     def is_connected(self) -> bool:
@@ -159,9 +162,7 @@ class PhysicalNode(_IpcNodeBase):
                 try:
                     self.connect()
                 except Exception as exc:
-                    print(
-                        f"[PhysicalNode] Reconnect to {self.host}:{self.port} failed: {exc}"
-                    )
+                    _log.warning("Reconnect to %s:%s failed: %s", self.host, self.port, exc)
             self._reconnect_stop_event.wait(self.reconnect_interval)
 
     # ------------------------------------------------------------------

@@ -1,4 +1,7 @@
 from pathlib import Path
+from fcpp_bridge.log import get_logger
+
+_log = get_logger(__name__)
 
 
 class RuntimeGenerator:
@@ -171,4 +174,4 @@ private:
         (output_dir / "node_manager.hpp").write_text(RuntimeGenerator.node_manager_header())
         (output_dir / "main_template.hpp").write_text(RuntimeGenerator.main_template_header())
 
-        print(f"[Runtime] Generated headers in {output_dir}")
+        _log.info("Generated headers in %s", output_dir)

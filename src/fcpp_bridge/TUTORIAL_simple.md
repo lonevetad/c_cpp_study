@@ -567,3 +567,24 @@ on_update(SwarmSnapshot)    (your callback — called each round)
     ↓
 logging / metrics / UI
 ```
+
+---
+
+## Further examples
+
+The `examples/` directory contains ready-to-run programs with pure-Python simulations.
+No C++ toolchain is required to run them.
+
+| File | What it shows |
+| ---- | ------------- |
+| `message_dispatch.py` | `spawn` + `sp_collection` point-to-point message routing |
+| `channel_broadcast.py` | `bis_distance` elliptical channel selection |
+| `collection_compare.py` | SP / MP / WMP collection algorithms side-by-side |
+| `worker_role_assignment.py` | **`match/case` → C++ `switch`** for 8-role swarm dispatch + periodic `spawn` reports + `self_uid()` + `RoleCommunicationType` |
+
+`worker_role_assignment.py` is a good next step after this tutorial: it uses the same
+spanning-tree primitives (`bis_distance`, `nbr`, `min_hood`, `sp_collection`) but adds
+`count_hood`, `old`, a `match/case` block dispatching per `WorkerRole`, `self_uid()`
+(→ `node.uid` in C++; safe inside branches, no CALL counter), and a `RoleCommunicationType`
+enum classifying each role as endpoint / receiver / repeater.  See `DSL_GUIDE.md §6.7`
+for the `match/case` reference and `§4` for `self_uid()` in the primitives table.

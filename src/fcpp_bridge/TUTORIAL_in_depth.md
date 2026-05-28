@@ -878,3 +878,31 @@ proxy.close()
 | Stop heartbeat         | `swarm.stop_heartbeat_monitor()`                            |                                                |
 | Pause simulation       | stop calling `step()`                                       | Subprocess stays alive                         |
 | Stop entirely          | `swarm.close()`                                             | SIGTERM → SIGKILL after 5 s                    |
+
+---
+
+## 11. Further examples
+
+All examples in `examples/` follow the same pattern: an `@aggregate_function` class
+(transpilable) plus a pure-Python `_demo_simulate()` that needs no C++ toolchain.
+
+| File | Highlights |
+| ---- | ---------- |
+| `message_dispatch.py` | Full `spawn` + `sp_collection` spanning-tree routing (port of `message_dispatch.hpp`) |
+| `spreading_collection.py` | `abf_distance`, `mp_collection`, `broadcast` (port of `spreading_collection.hpp`) |
+| `worker_role_assignment.py` | **`match/case` → C++ `switch`** + `spawn` + `old` + `self_uid()` + `RoleCommunicationType`; 8 `WorkerRole` values, 24-node disaster swarm |
+
+`worker_role_assignment.py` is the canonical example of the v1.4–v1.7 grammar features:
+- **CALL-counter alignment**: all 7 CALL-based primitives are called before the `match/case`;
+  each case branch contains only local expressions (no primitives).
+- **Integer-literal case patterns**: bare names like `case RECEIVER:` are capture patterns
+  in Python 3.10+ (always match); use `case 1:` with a `# RECEIVER` comment instead.
+- **`self_uid()`** (v1.6): transpiles to `node.uid` in C++ without incrementing the CALL
+  counter.  Safe anywhere — inside or outside `match/case` branches.
+- **Role-specific tasks in step 7**: each case includes a task description and a local
+  placeholder variable; implementations marked `# [Placeholder]` are exercise stubs.
+- **`RoleCommunicationType`** (v1.7): ENDPOINT / RECEIVER / REPEATER enum associated with
+  each `WorkerRole` via `ROLE_COMM_TYPE` dict.  Endpoint roles (2, 3, 5, 6, 7) inject
+  sensor-reading messages; repeater roles (0, 4) relay without originating data.
+
+Design notes and 7 evolution paths: `development_history/WORKER_ROLE_ASSIGNMENT.md`.
