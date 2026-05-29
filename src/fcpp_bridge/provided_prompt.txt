@@ -1,0 +1,539 @@
+Inside the folder "./src/fcpp_py_porting" there is my first attempt (done by You, ClaudeCode) of creating a "bridge" between Python 3.14 and the C++14 library named "fcpp" (already cloned inside the folder "./src/fcpp_py_porting/fcpp_clone_GITIGNORE_ME/fcpp", which is also a GitHub project). Inside the folder "./src/fcpp_py_porting/fcpp_clone_GITIGNORE_ME/papers" there are the PDF of the scientific papers describing the "Field Calculus" theory behind it, and the "Aggregate Programming" paradigm that the "fcpp" GitHub is implementing.
+Read the ".md" files to know more about that first attempt; You can notice that I wanted the "bridge" mentioned above to work with C++26.
+
+At first, I haven't planned that first attempt thoroughly and I haven't included the constraints that a compiled language like C++ imposes. Also, the "fcpp" library has been explicitly implemented using C++14. Lastly, the "fcpp" library needs ahead to know the exact type(s), structures and tuples of the data that the "aggregate main" function of each single "node/device" will share across each other "nodes/devices" in the same network.
+Considering that a Python program might need to execute a previosly-unknown aggregate program, how can I actually implement the "bridge" without screwing up the C++ compiler?
+I have an idea:
+
+1) At first, define in Python one class for each aggregate function available (for example: "nbr", "old", "spawn", "follow_target", "min_hood", "max_hood", "gossip", "sp_collection", "mp_collection", "wmp_collection", "count_hood", "bis_distance", "rectangle_walk", "abf_distance", "broadcast", etc.), adequately grouped and abstracted using the best modern and more suited Python paradigms (like: template programing, OOP, prototype programming, decorators, etc). Use inheritance and composition, if necessary, according to the best modern Python standards.
+2) "Translate/transpile" a "main_aggregate function", which is built using the classes described in the point above, into the equivalent C++ code.
+3) Serialized the produced C++ code in a specific internal folder (for instance: "cpp_transpiled").
+4) Add any additional C++ source file needed to allow the communication between the swarm (executed in the subsequently compiled C++ program) and the invoking Python program. In particular, take into account that the Python program might need to add or remove devices/nodes to the swarm (so, the device count might vary over time) and each update and data shared across the swarm (even across each node individually, if required) must be notified to the invoking Python program (either by callbacks, data serializations, bridges, API calls and/or HTTP-alike client-server communications).
+5) Compile the newly created C++ source(s) code (by invoking the GCC linker if necessary, or by using the CMake tool, or anything else: whatever fits the best) in a separated shell (a Bash shell, probably).
+6) Run the newly compiled code (note: is this approach called "hot reload"?) to update/notify the swarm modeled in the Python side, such that the Python program might do whatever it wants with the updates (log the statuses of each node in the swarm and/or the whole network entirely, or send the updates to the actual individual physical devices that might be subscribed to receive commands [via sockets, WebSocket, steams of bytes, whatever suits bests .... allow all possible methods, maximum the 10 most used and maximum 2 rarely used, allowing for modular usage], display the network in a GUI [a desktop app, a mobile app, a Web page, a google-maps alike map, etc. ...), start/stop the swarm if possible [if it's a simulation, for instance], or other usages
+
+Is that idea feasible?
+Can that idea be extended by allowing the Python program to accept a string or a file holding the aggregate program and execute it (after parsing it via the "antlr" package)?
+If so, either refactor the "fcpp_py_porting" project or create a new project to implement that idea.
+
+
+
+
+
+
+Read those folders and their parent folder, scanning for "*.cpp" and "*.hpp" files. Look for the C++ source files where aggregate functions are defined and used; in parrtucular, consider al functions in which the parameter "CALL" was provided, all functions having "ARGS" as one of its parameters and all functions whose body contains "CODE". Gather and list all of those functions; that list should include the following function names: "nbr", "old", "spawn", "follow_target", "min_hood", "max_hood", "gossip", "sp_collection", "mp_collection", "wmp_collection", "count_hood", "bis_distance", "rectangle_walk", "abf_distance", and "broadcast".
+After that, check if the "fcpp_bridge" folder and the project inside it contains the Python definition, the C++ transpilation and the grammar definition of those functions. If any of those function is missing, then refactor everything to include them. Other than that, take in consideration any definition of "primitive","primitiveCall" and "aggregate function" to perform those checks.
+In the end, write a ".md" file describing this process.
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+
+
+Check all folders previously mentioned and list all aggregate functions.
+
+
+
+
+recover the previous session, then perform the long-term work item: the ANTLR code generation, implement a GUI plugin (that can be a module and one of the possible consumers of the output data that the Python code caller wiould receive from the compiled C++ code). Write a ".md" file describing this process, then update the relevant ".md" files and save your memory.
+
+
+
+Refactor the C++ types defined in Python to include:
+- both the generics and the templates that C++ allows (from C++14 to C++26)
+- tuples
+- arrays, sets and maps from the std library
+
+
+In Python's source file "types.py", use the constructors (and OOP principles) to properly assign the values of instance variables.
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+
+
+
+
+
+Perform these refactorings (accounting for all Phases):
+- Check for any primitives and/or aggregate functions for those that can accept a function or a lambda function as argument (it's usually defined as "G&&" in C++); if they are not already accounted for, refactor all relevant Phases to account for those variants.
+- Add a flexible logging system (like standard output, a file, etc.) using the best modern standard and that can be toggled on or off. 
+- extensively use the OOP ("Object Oriented Programming") and prototype programmings, both with the best modern standard, for all steps and Phases (even for Validation).
+
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+
+
+
+
+
+Refactor the Python code to separate the classes definition in a file each, such that:
+- all files not named  "__init__.py" will become a separate package (with its own "__init__.py" file and relevant imports / exports) containing one file per class
+- all "__init__.py" will import / export all classes (one file each) that are currently defined in it.
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) me+-mory.
+
+
+
+
+Now perform a refacting similar to the last one, but applied to all Phases (especially the C++ transpilation) and save the memory and a ".md" journal to both annotate the completition status of the process while the latter goes on and to facilitate its resume (in case I hit the session rate limit or the PC shuts down).
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+
+
+
+Why the Phase 7 is marked as a "Future Work"? What could be missing?
+
+
+
+The following is another huge process: save each step (eventually, by updating a dedicated ".md" file) to allow the process to be interrupted and resumed at any time.
+Collect all C++ source files containing examples of usages of the FCPP library (usually, they are implementations of high-level / complex algorithms, rather than just learning-focused examples); in particular, look into the following folders:
+- "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src/fcpp_py_porting/examples"
+- "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src/fcpp_py_porting/fcpp_clone_GITIGNORE_ME/fcpp-exercises"
+- "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src/fcpp_py_porting/fcpp_clone_GITIGNORE_ME/fcpp-sample-project" and "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src/fcpp_py_porting/fcpp_clone_GITIGNORE_ME/fcpp-sample-project" (they contain linked source files)
+Inside this project's "examples" folder (located at the path "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src/fcpp_bridge/examples"), create Python source files that could re-create those C++ source files by using the "fcpp_bridge" project We created. These Python files are made for demonstration and learning purposes, so add explanatory comments too.
+The data that "Python" would receive from the generated-and-compiled C++ sources will be saved as log files, one for each node in the swarm (use each node's id as part of the log's filename, one for each node).
+It is mandatory that, for each C++ source file taken into account, the generated "main function" should call each aggregate function in the same manner and order as the respective original C++ source file: the functionality and algorithm must be the same.
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+
+
+
+--------------------------------------
+
+
+
+check if there is any possible dependency to the "fcpp_py_porting" project: the "fcpp_bridge" project must never depend on the "fcpp_py_project", despite the similarities.
+
+
+
+
+The following is another huge process: save each step (eventually, by updating a dedicated ".md" file) to allow the process to be interrupted and resumed at any time.
+
+Check and eventually refactor the "updates consumption by listeners" part and the network initialization (if and only if it's defined specifically to the network: ignore this whole part if the "updates listener" is defined specifically to a node definition) by nodes addition.
+- the network initialization could use multiple strategies to add nodes:
+- - the nodes could be added with a random unique ID (and other settings, like the position, communication range, maximum speed and propulsion, etc.)
+- - nodes could be added during the network execution both randomly (as described above) and by providing all necessary details (for example: ID and position); the latter is used to add realistic, physical and production-related devices into the network
+- - nodes could be added with sequential ID (which are unique as a consequence) and optional starting positions
+- the network should be able to remove nodes by their ID (simulation disconnection)
+- the network should check if nodes are still "alive", with various modern techniques like "heartbeats", for example
+- usually, a single updates listener should be set, i.e. it listens to all updates of all nodes, but multiple listeners could be provided:
+- - define a "proxy" that delegates the update consumption to a flexible list of "updates listeners", either sequentially or in a parallel-asynchronous way (defined at constructor time); it allows to define kind of a pipeline. The "updates listener" addition should return an integer, which identifies that listener's ID, so that the addition caller might remove that listener in the future
+- - there should be possible to define a "per-node" set of "updates listeners" that overrides the shared listener one; to do so, use a dictionary / mapping / std::map (whatever it's required by the programming language) having the node ID as key and "update listener" as values and that is meant to deliver updates to custom listeners to the specified nodes
+- - adding another updates listener, either globally or per-node, will substitute any non-proxy listener to a "proxy" one
+
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+
+
+
+
+
+The following is another huge process: save each step (eventually, by updating a dedicated ".md" file) to allow the process to be interrupted and resumed at any time.
+
+First, refactor the "listener_proxy.py" such that the "mode" is an enum (described in a dedicated source file) rather than a string.
+
+Secondly, write a "TUTORIAL_simple.md" file and a "TUTORIAL_in_depth.md" file to explain, respectively, a simple usage of the "fcpp_bridge" library for learning purposes and a very advanced and customizable usage of the library meant primarily for production and professional purposes (even deployment into physical node-devices ).
+
+Here follows the details of the "TUTORIAL_simple":
+- it should both provide a very basic example of implemented algorithm: among 20 nodes, the source has the ID equal to 3 and destination equal to 18, and the aggregate program does the following:
+- - it calculates the distance from the source to the destination using the "bis_distance" algorithm
+- - it tracks the amount of "hops" (of nodes) from the source node to the destination along the shortest path calculated in the previous part (hint: the function "min_hood" might be used to do so)
+- - it sends all of those information to the destination (source ID, total distances, number of hops) using one of the primitive functions to send information (hint: it's likely a "channel" function)
+- the "TUTORIAL_simple" should explain each major step performed by the library, for example:
+- - definition of the aggregate program by composing Python DSL aggregate primitives,
+- - transpilation to C++ sources,
+- - serialization of those C++ sources,
+- - compilation,
+- - execution of the compiled C++ code,
+- - set-up of the "listeners" of the updates provided by the compiled C++ code,
+- - and consumption of those updates by, for example, logging them.
+- the "TUTORIAL_simple" should also focus mostly of what kind of files are needed to be manually written (and their content) and what shell commands should be performed to run the whole thing.
+
+
+The "TUTORIAL_in_depth" is similar to the "simple" one, but with additional features and details that are meant for high-performant and highly customizable production environments:
+- it should show how to set all details and settings, in particular the "updates consumption": set for all nodes a "updates_listeners_proxy" (mentioned in the previous task) which to delegate the updates consumption to the appropriate logging module and a dummy listeners (the latter just "print" each update as a placeholder for production-ready purposes), and set the "updates listener" to the node with ID 5 to a custom listener that simply prints "custom lister for ID 5" before logging the updates
+- the Python code should manage everything inside a custom class, both for further reusability (in many more usages of the "fcpp_bridge" framework) and to allow "start" and "stop" of the simulation
+- it should allow to add more "updates listeners" dynamically (hint: use the "proxy" mentioned above)
+- it should allow to modify the compilation subprocess, if possible; for example: by defining some flags like "-wall" or the optimization level
+- it should allow to set the path of both the generated C++ source files and the compiled files (if it's not possible, then refactor the involved sections beforehand) 
+- describe how the compiled C++ sources are invoked,
+- describe how the network execution could be suspended, resumed or stopped entirely
+- describe how the updates are delivered and consumed
+- describe how the nodes can be added, removed and "monitored for disconnection"
+- describe all other details
+
+Lastly, update all relevant ".md" files and save Your (ClaudeCode) memory.
+
+
+
+
+
+
+About the 'passive heartbeat': refactor that part such that the 'check for node disconnection' is abstracted away and it can be dynamically configured (both via constructor and a setter method) to be implemented using any implementation: passive heartbeat, active ping/pong, or other modern solutions.
+(One key aspect, among the many, of the whole 'fcpp_bridge' is to be flexible and configurable.)
+Update the existing '.md' files, then save your memory."
+
+
+
+
+Read the "*.md" files inside the "fcpp_bridge" folder (expect for "TUTORIAL_*.md" and "README.md") and compact them in a new "DEPLOYMENT.md" file (and move the original files in a new "development_history" folder afterwards), by compacting them chronologically describing the whole deployment, grouping the changes by topics and Phases. Then, save your memory.
+
+
+
+
+
+Write a ".md" file explaining in detail how to use the Python DSL to write the aggregate functions; dedicate a paragraph for C++-alike grammar. If there's no way to specify C++ grammar, like IF, WHILE and SWITCH statements, then do a refactor beforehand to include them.
+Then, update your memory
+
+
+
+-----------------------------------------------------
+-----------------------------------------------------
+
+
+
+If I would follow the 'TUTORIAL' '.md' files' instructions, would I be able to manually run a test or a custom test/exercise?
+
+...
+
+Yes, add that note, thanks. Also, for debugging purposes, I want each steps of the bridge to be run individually: I don't want to run again, for example, the 'transpilation & writing C++ sources' again if I have already did them previously, because I would loke to jump ahead to the very next step. To do so, Add an optional command line argument that specify which steps run (a list of) OR to resume the process from a particular step. Update the '.md' files accordingly, in particular the README and the tutorial.
+
+
+
+-----------------------------------------------------
+-----------------------------------------------------
+
+
+( potrebbe tornare utile leggere "development_history/session_recovered_2026-05-28.txt" )
+
+->
+
+** Request 1** (from previous session's continuation): Add a note to `TUTORIAL_simple.md` explaining what works without a C++ toolchain vs. what requires FCPP headers. The user confirmed this after I diagnosed that steps 1–3 (validate, transpile, write C++) work immediately but steps 4–7 (compile, run, IPC) require FCPP headers and `g++`.
+
+**Request 2**: "For debugging purposes, I want each steps of the bridge to be run individually: I don't want to run again, for example, the 'transpilation & writing C++ sources' again if I have already did them previously, because I would like to jump ahead to the very next step. To do so, Add an optional command line argument that specify which steps run (a list of) OR to resume the process from a particular step. Update the '.md' files accordingly, in particular the README and the tutorial."
+
+
+
+
+-----------------------------------------------------
+-----------------------------------------------------
+
+
+
+Here follows a hughe task, with multiple substeps and that might be performed by leveraging parallel agents.
+
+Inside the "fcpp_bridge" folder, there's a folder named "examples" that contains (as the name suggests) some examples of usage of the "fcpp Python to C++ bridge". Add some examples that includes the usa of C++ grammar within the "Python DSL" side; in particular, add one example including a "switch" statement where the nodes' ID are used to define a "WorkerRole" (which is an enumeration of at least 4 roles, for example: "unassigned", "receiver", "lidar", "infrared_sensor", "ripetitor", "torchlight_microphone", "rubbles_remover" and "flying_overseer") role to assign to each node, maybe using the "spawn" primitive to transmit a "message" from an "endpoint" ("lidar, "infrared_sensor", "torchlight_microphone" and "flying overseer" are "endpoint" roles) to a "receiver" (the "receiver" WorkerRole is a receiver, as the name suggests) every 10 seconds containing both the node's ID and "I found something" as body of that "messdage".
+Then write a ".md" file inside the folder named "development_history" about this example and its possible later evolutions.
+Then, update your memory
+
+
+
+
+
+
+Write a "node_uid__placeholder_flagging.md" file under the folder named "development_history" (add a uman-readable ISO timestamp at the top of the file) explaining in details "things you'll carry foward": the whole "node.uid placeholder" topic, the whole "CALL-counter alignment constraint" topic and the whole "any other spots where the DSL simplifies away real C++ API details" topic.
+Thanks
+worker_role_assignment
+
+
+
+
+Multi-step process (save your memory in between because the session limit might be reached during this process exdecution):
+
+First of all, modify the transpiler (and everything else as needed) to expose a `self_uid()` DSL primitive that wraps C++'s `node.uid`: this refactoring is reported inside the "WORKER_ROLE_ASSIGNMENT.md" file and I, the developer, have missed this issue during code review; this refactoring is likely very wide but necessary. Update all relevant ".md" files accordingly. Then, save your memory
+
+Secondly, update the "worker_role_assignment" Python file under the folder "examples" (and its related "WORKER_ROLE_ASSIGNMENT.md" under the folder "development_history") such that:
+- every enumerations and their usages have comments that allows humans to check the used integer numbers (which are the enumeration entries' values) to the respective enumeration entry's name
+- in that "WORKER_ROLE_ASSIGNMENT.md" there is the following note: "The `match/case` in step 7 contains **only local expressions** (no primitive calls) and is therefore safe to use as a per-role customization point."; refactor that "step 7" (and the relevant documentations too) to reflect the actual Role's tasks. Take into account that this whole Python file is an exercise, so a Role's task without an actual, non-placeholder implementation might just be a dummy logging acting as a placeholder for the real-world implementation (which is not and can't be provided in this example).
+
+Lastly, update all untouched relevant ".md" files, if necessary, and save your memory.
+
+
+
+
+
+
+I forgot an important aspect of the exercise "worker_role_assignment" and some fixes (which are listed in a markdown-alike style):
+- the "ripetitor" is a typo: fix it with the correct English word "repeater"
+- the example is representing a toy-example of a swarm that the Civil Protection might deploy in real-world scenarios: the "WorkerRole" enumeration lists a simplified list of actual roles a device might have. In particular:
+- - every role has a "RoleCommunicationType" associated with it (which is a different enumeration) that can be "endpoint", "receiver" and "repeater". These types of roles represent the final purposes a "WorkerRole" fulfills within the communication flow. That communication flow takes inspiration from "channel" -alike algorithms (like "channel_broadcast", "chain_decaying", "gossip_dispatch" and "spreading_collection", or even the IPv4 and IPv6 protocols), and has the following details:
+- - - "endpoint": a device whose "WorkerRole" is an "endpoint" is meant to gather some data from its environments (the actual implementation of the data gathering depends of the real-world scenario and device, so use dummy placeholders like logging functions and a random number to simulate an "endpoint" doing its job) and send it to the "receiver";
+- - - "receiver": a device whose "WorkerRole" is a "receiver" is likely a working station or a human professional (so its physical position likely never changes) who just need to receive the data from the "endpoint" and save it (for example: logging these data);
+- - - "repeater": a device whose "WorkerRole" is a "repeater" acts as an intermediary between any "endpoint" (even multiple ones at the same time) and any "repeater" (even multiple ones) that are not in direct communication; a "repeater" might transitively transmit some data or some messages to other "repeater"s, similarly to the already-implemented primitives related with messages transmission
+- - the roles "lidar, "infrared_sensor", "torchlight_microphone" and "flying overseer" all have the "endpoint" "RoleCommunicationType"
+- - the role "receiver" has the "receiver" "RoleCommunicationType", as the name suggests
+- - the role "repeater" has the "repeater" "RoleCommunicationType", as the name suggests
+So, refactor the "worker_role_assignment" exercise accordingly, then update all relevant ".md" files.
+Save your memory at each step to allow for precise session recovery: a session suspension due to "limit reached" might happen.
+
+---
+
+Before I start, two roles are unspecified in the RoleCommunicationType mapping: UNASSIGNED (0) and RUBBLES_REMOVER (6). The user's description only covers LIDAR/INFRARED_SENSOR/TORCHLIGHT_MICROPHONE/FLYING_OVERSEER (endpoint), RECEIVER (receiver), and REPEATER (repeater).
+Your questions have been answered: "What RoleCommunicationType should UNASSIGNED (0) have?"="repeater (default)", "What RoleCommunicationType should RUBBLES_REMOVER (6) have?"="endpoint". You can now continue with these answers in mind.
+
+
+
+
+
+Create a plan for a v1.9 version (or the "next in line" version) of the development phase, proposing solutions to the following "known gaps" (not all gaps are listed there), saving Your memory for precise context resume after each step.
+1) why the "Receiver UID placeholder" isn't broadcasting the UID i the "worker_role_assignment" example? Why it's needed in the first place? Why "broadcast" might be the solution rather than other solutions (like, for example: "channel_broadcast")?
+2) can't "set_t{node.uid}" actually be produced during transpilation? Also, is "set_t" the actual type or sould it be "std::set<device_t>{node.uid}"?
+3) What actions are needed to perform the "min_hood with tuple" refactoring?
+4) Couldn't we use a "node_uid()" function call (adequately transpiled to "node.uid", depending on the actual transpilation process) to fill that gap?
+6) What actions are needed to perform the  "ActivePingStrategy incomplete" refactoring? 
+7) What is missing in the "DeviceManager.accept_registrations(port)" gap? What actions are needed to perform that refactoring?
+8) "PhysicalNode exception handling" isn't there any C++14 functionality (eventually implemented in later versions of C++) allowing "close()" function call to be performed after the exception handling? If so, then refactor and implement it.
+9) What could be missing to visualize the "multi-swarm coordination UI"? Is an actual GUI/frontend required? If so, then acknowledge that and just provide an "output consumer" if not needed (ask me, the Developer, before performing that refactoring).
+Update all relevant ".md" files for both journaling (use the "development_history" folder accordingly when needed).
+
+After all of that and saving Your memory, refactor all "print" function invocation with configurable modern standard logging systems (defaulting to "printing to standard output" ).
+Then, avoid repeating code upon logging warnings after validations steps by refactoring that logging into a reusable and flexible code.
+Lastly, update the ".md" files again and save Your memory.
+
+--->
+Your questions have been answered: "For gap #9 (multi-swarm coordination UI): the backend (DeviceManager fleet-wide ops) is already done. What form should the frontend take?"="Allow flexible, configurable and mutliple-channel output: one or more of those options could be provided (if necessary, a proxy will forward the data received to the registered output channels; the forwarding might be sequential-and-synchronous or parallel-and-asynchronous depending on a constructor-level parameter) and the backend accepts an output channel (or the "proxy" previously mentioned: define a super-class by applying either Prototype Programming and/or Object Oriented Programming paradigms), defaulting to a plain but configurable logging system.". You can now continue with these answers in mind.
+
+
+
+
+
+
+
+I mistakenly added the frozenset-unpacking -related bug, sorry! Congratulations for spotting it and fixing it!
+
+Style-related refactoring of all examples and all files using enumerations' values, both in assignments and comparisons / match-case: use the language-specific way to refer to the enumeration entry's value (by actually using the enumeration entry and reading its ".value" in Python, and by using whatever C++ allows for C++ source files) rather than a plain constant value (integer or string), because the latter feels like a "magic-number" antipattern despite all comments.
+
+Then, update all relevant ".md" files, add a new ".md" file in "development_history" folder, include this refactoring as a pre-work which preceeded the "V1_9_plan". Then, save your memory.
+
+
+
+
+
+
+I'll manually refactored the lines 136-152 to explicit the amoun of roles cycle assignment rounds (in the constant named "FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS") and the amount of additional "repeater" nodes (in the constant named "ADDITIONAL_REPEATERS_EACH_CYCLE"). Update the "WORKER_ROLE_ASSIGNMENT.md" to account for the constants "FULL_ROLES_ASSIGNMENT_CYCLES_ROUNDS" and "ADDITIONAL_REPEATERS_EACH_CYCLE", such that a reader might tweak those constants to modify a bit the overall network shape.
+Update all other relevant ".md" files if necessary, then save your memory.
+
+
+
+
+-----------------------------------------------------
+-----------------------------------------------------
+-----------------------------------------------------
+
+
+This is a multi-steps huge process: update the relevant ".md" files and save the session memory at each step, so that this session could be resumed at any time.
+
+The "examples" folder is fairly important for developers who needs to understand how the whole project works, how the FCPP library underneath works and the theory behind it (i.e., "Field Calculus"), so this collection of examples will grow over time.
+This implies the necessity of sharing code and standards: analyze the "examples" folder and create a "examples_cohesiveness.md" file with the plan to refactor the "exercises" folder, such that repeated code and looking-alike enumerations and settings can be shared, similarly to what was performed resulting in the creation of the file "_example_utils.py".
+
+This operation is also meant to simplify the creation of the next example, which takes inspiration takes inspiration from the "worker_role_assignment" one:
+- this next example is named "communication_roles_assignment" and it's created after the execution of the aforementioned plan.
+- I will mention "future exercise" as hints for further developments: take notes of them in a separated ".md" file or section, such that future development sessions might take them into account
+- the focus of this exercise is the definition of a simple algorithm in which the nodes agree to which roles they should take in order to establish a communication from some sources to some destinations
+- the roles are similar to the ones defined inside "worker_role_assignment" (hence, one of the reason of this whole refactoring), with a renaming: the enumeration is named "CommunicationRole" and its entries are "Sender", "Repeater" and "Receiver" and "Unassigned". By default, all nodes have the "Repeater" role until they either need to have another role or are elected to have another role. 
+- future examples will handle multiple and independent communication instances (implying that a node might have a role in a communication process and a different role in another communication process; also, the "spawn" primitive might be involved in it), but the current exercise display a simpler scenario: at first, the nodes negotiate the roles and, after establishing them, they start to act like that.
+- - In particular, a "Sender" will start to send messages as soon as it can, the "Receiver" will digest message as soon as it can and the "Repeater" will take parts in the message deliverance as soon as possible.
+- the "Sender" role is equivalent to the "endpoint", while the other roles are literally the same
+- the exercise starts by placing a configurable amount of nodes (by default, 15) randomly scattered in the area, then defines a configurable amount of "sink point" (defaults to 2) and lastly defines a configurable amount of "source points" (defaults to 3)
+- the "sink points" are the point of interest of every "Receiver" node, as explained later
+- the "source points" are the point of interest of every "Sender" node, as explained later
+- in this exercise, the sum of the amounts of "sink points" plus the amount of "source points" can't exceed the amount of nodes, so a check is needed and an exception for "inconsistent configuration" might be raised if the check fails
+- the nodes won't move (i.e., no code for changing their position will be defined in this exercise), which implies that "sink points" and "source points" might be places outside the communication range of all nodes. For the sake of simplicity, the network creation and  the "sink points" and "source points" is defined as follows:
+- - the nodes are created all together, then each node's position is tested to count the amount of neighbors it might reach.
+- - if more than 20% of the nodes (a configurable threshold, which defaults to 20%) are "isolated" (i.e., the only neighbors they could reach are themselves, i.e. "nbr_count()" returns 1), then the migration is needed
+- - to migrate the "isolated" nodes, simply randomly change their location, then recalculate the list of isolated nodes (the latter functionality might need to be abstracted away into a separate function; NOTE: this function is NOT an aggregate one, because it's meant to be run just at simulation startup time)
+- - if the threshold is exceeded again, then the "migration" is applied again in a "while" loop (after logging the amount of migrations previously performed and the positions of all nodes, highlighting the "isolated" ones)
+- - if a "migration" succeeds (i.e., less than "isolation_threshold %" of the total nodes are "isolated" or a configurable maximum amount of iterations has been performed [defaults to 50], whichever happens first, to avoid infinite loops), then a map "node's ID -> reference to node's location" is defined for future uses; then, the "sink points" and "source points" are placed as follows:
+- - - for each of them, for sake of simplicity, are located by choosing a random node and defining the "sink/source point"'s location as a random point within the communication radius of that node (use that node's position and the "norm" function to calculate the geometrical distance, which is used to check if the "sink/source node" lies within the communication radius)
+- - - each node might have at most one "point" among "sink" and "source" ones within its communication radius: trace with a map each node that has already been "locked"; the map uses the node's ID as the map's key and the pair "sink/source point's position ; is_sink flag" as the value. (A list of triplets "node's ID; point's location; is_sink" might be a good alternative to the mapping: You decide which one is better) If a "sink/source point" location lies within any "already locked node", then the point's location must be recalculated in a "do-while" loop after logging that a re-attempt for the "j-th" "sink/source" point needs to be made (this relocation is considered to be succeeded after a configurable maximum amount of iterations has been performed [defaults to 10], to avoid infinite loops).
+- - - after each "sink/source" nodes are placed, then the actual simulation (of the aggregate algorithm) can start!
+- the aggregate algorithm works as follows:
+- - each node can always access to the "sink/source points" location, for the sake of simplicity (in future exercises, the nodes will also wander to look for those points, like in a realistic scenario)
+- - each node votes to decide what "CommunicationRole" they should assume, then they act accordingly to the role:
+- - - each node next to a "sink point" will have the "Receiver" role, therefore they will consume incoming messages
+- - - each node next to a "source point" will contest the "Sender" role among its neighbors (a situation that shouldn't happen, but IF it does then a resolution is needed): the closest node is the "Sender"; if there's a tie, then an election is performed (which likely results in the node with the lowest ID winning the contest). A "Sender" node will send messages towards the "Receiver" nodes using any communication algorithm (most likely, the "broadcast" since the "Receiver" nodes are not globally known)
+- - - each node that is not a "Receiver" nor a "Sender", for whatever reason, will automatically be a "Repeater" and will propagate the messages
+- - notes about the messages definition, creation and consumption:
+- - - this is an exercise, so the messages are just dummy data that are created and consumed in a dummy, demonstration-purpose only:
+- - - - a "message" is simply the "Sender" node's ID, that node's position, the "source point"'s position and a progressive integer meant to identify the message (it's just the number of time that node has created a message, therefore the "old" primitive might be useful)
+- - - - a message is created after a "message_ticks_creation_interval" amount of "ticks" are elapsed (this is a configurable amount, defaults to 10)
+- - - - a message is consumed by the "Receiver" nodes by simply logging their data; the "message consumption" function is configurable and future exercise might allow for per-node definitions, but this current exercise just define a global "message consumption function" to be configured as a simple logging function
+- - - - the "Repeater" nodes just repeat the messages to their neighbors, if any message is available (so, a check needs to be performed)
+- the "sink points" and "source points" are unchanged after the initialization process; future exercise might make them variable in time (after considerable amount of ticks, for example 35).
+- Similarly to the previous point, the nodes won't change their "CommunicationRole" (especially because the "sink/source points" are fixed and known beforehand) and don't move. Future exercises might need to partition the whole area across the network (which is a complex algorithm by itself) and then each node will need to scan their assigned area (a subsequent evolution ot that "area partition" algorithm which uses the latter one).
+
+Update all relevant ".md" files afterwards and save the memory and the session recordings such that this session can be resumed whenever it will become accidentally interrupted.
+
+
+
+Refactor the Python DSL, the transpilation, the C++ generation and all other relevant parts to allow for "match guard clause" (and other match-related functionalities that are shared between Python 3.14+ and C++14).
+Write a ".md" file under the "development_history" folder and update all relevant ".md" files. Then, update the "bridge.md" file: it might be very outdated.
+Then, save your memory.
+Then, refactor the examples by extrapolating, if possible, the "_demo_simulate()" function by applying the "algorithm pattern": an example is a class that extends a generic "AbstractExample" class which defines the common code and leave abstract function (i.e., functions with just "pass" or "return None" as body) to be defined by each example source file. Also, the list of devices must not be a constant (but nodes can be added or removed by their ID), because the exercises might simulate a dynamic environment where nodes might join the network or leave the network for whatever reason.
+Lastly, write/update relevant ".md" files and save your memory and the session. 
+
+
+
+
+Why the example have both a a class tagged with the "aggregate_function" decorator and a class inheriting "AbstractExample"? Shouldn't they be the same?
+
+
+All of the examples under "examples" folder are meant for developers who want to have some inspiration to start designing their own algoritms, so having the simulation completely re-writing the aggregate program in pure Python (i.e., without any FCPP primitive) kind of defeats the whole purpose of this whole project.
+Update the already existing "1.9 plan" by merging the already present steps with the examples refactoring, such that running a Python source file under the "examples" directory actually calls the whole toolchain and sets up the network's updates and the individual node's updates to be consumed as logs in local file(s) (which is one of the possible ways to consume the updates I mentioned in previous refactorings). Use the "abstract_example.py" source file as a starting point of the exercises refactoring.
+Reorder the resulting "1.9 plan" steps to optimize the overall refactoring, by eventually merging or splitting the steps.
+Note: every step must also update all related ".md" files, even write new ones if necessary, and save both Your (ClaudeCode) memory and session data, to allow the session to be preciselu resumed if interrupted. 
+
+
+
+
+
+
+I need to correct You (Claude Code) about the "session save": while it's still a highly valuable and interesting feature, I was originally referring to "the session of this conversation with Claude Code, which should be able to be resumed at any time.
+
+Keep the "v1.9" plan as the new updated version (i.e., as it appears in current file; read it again if necessary or to refresh Your memory) and execute , but also save the "session of the conversation and tasks progression of Claude Code, other than updating the relevant .md files" between each sub-step.
+
+All edits and command line instructions/executions are allowed IF AND ONLY IF the only affected files lies under the folder "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src". Never download a file, establish a connection via Internet or execute a "curl" command without my (the Developer) explicit consent: ask me the consent and, in the meantime, execute asynchronously all other tasks and sub-steps that are not dependent to that consent request.
+
+Update Your memory afterwards and update all relevant ",md" files after each major step.
+
+
+
+
+
+Check if the "TUTORIALS" (remember: the "simple" is meant to show a simplified version of the "fcpp_bridge" library usage and it's aimed for those who begins to learn the basics of this library, while the "in_deep" is meant for production-scenario, where expert developers tweaks the configurations [like complex outputs, complex updates consumers and complex logging system, as well as heterogeneous implementations of physical nodes like parallel and asynchronously executed instances of the library / the original FCPP library communicating with the "fcpp_bridge" one) are updated with the last "v1_9" refactoring, then update them as necessary.
+
+
+
+
+
+
+Inside the folder "exercises", define a folder named "ex_utils" which will contain some shared utilities, like initialization functions.
+Create a "position.py" file whose functions sets the position of all nodes in a network somehow. The function "rnd_in_area" sets the positions in a random point within a given area. Other functions might be defined.
+
+Create a "storage.py" file whose functions sets the value of a specific variable of the nodes' storage. Those functions might need to check the nodes' storage types in order to produce the matching values.
+One function is "rnd_vec" which creates random vector of a given length whose values are drawn randomly from a given interval. Similarly, a function setting vectors of random length (the length is bound by another given range).
+
+Another function for the "storage" is "spread_data_coprime_ID", with the following algorithm: for each node, get its neighbors's IDs and filter out the IDs that are not coprime with current node's ID. The resulting array is the value stored in current node's storage (in the given storage's field).
+An alternative version of the function "spread_data_coprime_ID" is "spread_data_coprime_ID_pos", whose only difference is the data it saves in the storage: not a vector of IDs, but a map with those IDs as keys and he related node's position (this is a dummy value, a placeholder) is the value.
+
+
+
+
+The "spread_data_coprime_ID_pos" will be used for future exercises, one built upon the previous one. This group of exercise will incrementally create lots of solutions and tools; the basic ideas are the following:
+1) "scattered_database": it emulates "sharded, distributed, mirrored and replicated databases" and a global "pool of knowledge", but whose pieces/shards are scattered (and replicated) across all nodes' storages (multiple copies of the shards are), in which a node might need to retrieve some information stored in some other node's storage. A node, after a while, requires a data it doesn't have (like, an ID [and the related node's position] that is not present in its storage and it's different by its own ID), then node having the required data send it (somehow, maybe using a spawn and across a backward "bis" or "channel_broadcast") to the "requesting node".
+2) "area discovery": an area (which is a rectangle or a non-self-intersecting polygon, depending the versions of the example) gets divided into a grid of tiles of squares (if the tile is internal of the area) or polygons (if the tile is at the border), and the tiles get scanned by the nodes; the nodes saves the tiles' shape as values of "scattered_database", while the tile's center is the key (all tiles' centers are "snapped" and aligned to the grid, whose dimension and granularity are known at configuration/initialization time). The simples version of the related exercise puts a node node inside a tile, the area is rectangular and there are an amount of nodes equal to or greater to the number of tiles (and the nodes save in the storage the data of their closest tile's center and the data of their neighbors's closest tile's center [so, the nodes "nbr" just their "personal tile" 's center and save the received tiles' center; they never share the entirety of the map]).
+3) "iteratively_area_discovery": it's similar to the previous one, but the area might be a non-self-intersecting polygon (or not) and the tiles amounts are greater than the nodes count. So, the nodes must elect the nodes who has to "explore" a tile (the dummy implementation of "exploring a tile" is just sitting still next to its center for a configurable amount of ticks, like 7), while the other nodes has to move towards the "unassigned" tiles. "Moving" should be slow, slow enough that the nodes can also "scatter" the knowledge of the "assigned tiles" in order to not double-assign a tile. (Nodes store separately "the first tile ever assigned to them" and might "scatter" that "first ever tile assigned" with their neighbors. This way, every node can always check if a tile is assigned or not: by knowing the network size (in terms of hops), a node should receive a reply within a number of ticks that is more or less "twice the size of the network" [the back-and-forth of the request and the reply back], so not-receiving a response within than amount of ticks should imply that the interested tile is not assigned. If a node has not a tile assigned but it's not "discovering" it, then it should move towards that tile's center.
+Write a detailed plan for each functionality and for each exercise about their implementations.
+
+Then, update all relevant ".md" files, write a new entry on the "development_history" folder and save your memory.
+
+
+
+
+The "Future Exercise" FE-11 has a mistake: the double-assignment is prevented by querying a second "scattered_database" holding the pairing "tile (its center as key) - node (ID) assigned to it"; that second "scattered_database" is filled as follows:
+- it holds all the tiles assigned to the current node (so, the pairs "each of these tiles' centers ; current node's ID")
+- evert time a tile gets assigned to a node, that node shares that information (i.e., the tuple "tile's center ; that node's ID") to its immediate neighbors, who store the received tuple in their own "scattered_database" (THIS is the "duplication" mentioned earlier). In order to not split the network and to avoid broadcasting the "tile assignment event" to the whole network, a "spawn" is invoked and only that node's neighbors are involved in this "storing process": each other nodes (i.e., all nodes having a "hops distance > 1" from the spawning node) are excluded from the spawned process -> this way, the spawned process involves ONLY the "spawner node" 's neighborhood and no other node. (The whole "storing" operation can be optimized by moving it entirely in the spawned process: "the only the nodes that are strictly inside in the spawned process are the nodes that both have a hops_distance <= 1 and that doesn't have the provided tile's center inside their scattered database"; the second half of the condition impies that a node can be part of the spawned process only once, because successive evaluations of "scattered_database inclusion tests" will fail after the tile's center insertion. (Also, no node can ever stay at the border: it's either part of the spawned process or it's not). ) 
+. the "double-assignment-avoidance query" is performed as describe, i.e. by a query-with-timeout protocol: no reply within `2 × network_diameter`rounds (+ a margin) → tile is unassigned -> an election can be performed to decide which node will have the tile assigned to it (the node having the position closest to the tile's center is the "elected one").
+
+Update the "FUTURE_EXERCISES.md" file, the "EXERCISE_PLAN.md" as well (the instructions above have a higher priority over the existing ones inside the "EXERCISES_PLAN" file upon any contradictory statement; if any contradiction occur, write a highlighted note about that)
+Then, update all other relevant ".md" files, write a new entry on the "development_history" folder and save your memory.
+
+
+
+
+In the file "scattered_database.py", what is the purpose of using the primitive "sp_collection"? What is its definition and usage in the original "FCPP" library?
+Create a ".md" file explaining that inside a new "explanations" folder: I'll use it to learn more.
+
+
+
+
+Why  the file ".fcpp_bridge_cpp/consensus_latest.cpp" is OUTSIDE the "src" folder? It seems very unusual.
+If necessary, check the last 10 prompts and up to 5 last sessions to understand if it was a result of my mistakes.
+Could it be due to an attempt of "manually running an exercise from the command line pointing it from the parent folder of the src directory"?
+
+
+
+Then, update local files under "claude_code" from Your "MEMORY.md" files and all other files the latter refers to.
+
+
+
+
+
+
+I tried the "pip install -e ." command by pointing the Bash shell in the "src" 's parent folder: it got the following error.*
+
+error: externally-managed-environment
+
+× This environment is externally managed
+╰─> To install Python packages system-wide, try apt install
+    python3-xyz, where xyz is the package you are trying to
+    install.
+    
+    If you wish to install a non-Debian-packaged Python package,
+    create a virtual environment using python3 -m venv path/to/venv.
+    Then use path/to/venv/bin/python and path/to/venv/bin/pip. Make
+    sure you have python3-full installed.
+    
+    If you wish to install a non-Debian packaged Python application,
+    it may be easiest to use pipx install xyz, which will manage a
+    virtual environment for you. Make sure you have pipx installed.
+    
+    See /usr/share/doc/python3.12/README.venv for more information.
+
+note: If you believe this is a mistake, please contact your Python installation or OS distribution provider. You can override this, at the risk of breaking your Python installation or OS, by passing --break-system-packages.
+hint: See PEP 668 for the detailed specification.
+
+
+What is missing ? should I activate the Python environment ("venv"?) first?
+
+
+
+
+
+
+
+
+I don't want to use another sub-project "venv", because I want the "fcpp_bridge" to be able to work autonomously (accounting for its dependence of the "fcpp" C++ project underneath,
+
+Could it be a good idea to create an entirely new Git project in a folder adiacent to "this GitHub project" (i.e., "./src/../../fcpp_bridge"), copy all the files under the current "fcpp_bridge" folder into the newly created Git project (which has the very same name: "fcpp_bridge") and, after properly reference the original "fcpp" project, fix all "prerequisites / getting started" steps and path references?
+
+
+
+
+
+Before going with the "Option B", I need to clarify Your open question: the "FCPP C++ library" is a standalone project, made by someone else and with its own license; I already have cloned it inside the folder "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src/fcpp_py_porting/fcpp_clone_GITIGNORE_ME" (You can verify it by looking for the directory "fcpp" inside it) for training purposes.
+
+So, after assessing that I won't face any licence issues by choosing the "Option B" (create/copy the "fcpp"'s license, or do whatever it's needed to be legally compliant: I guess it's best to copy their "Apache License"), then go with the "Option B".
+
+
+
+
+
+
+After moving the Bash shell into "~/Desktop/prog/cpp/fcpp_bridge", I've tried to run an example. To do so, I opened the README and run all of the initialization steps up to " Running Tests" included: all tests passed.
+Despite exporting the "FCPP_INCLUDE_PATH" (by running the command "export FCPP_INCLUDE_PATH=~/Desktop/prog/cpp/fcpp_bridge/fcpp_original_source"), trying to run the "scattered_database" example fails. In particular, the command "python -m fcpp_bridge.examples.scattered_database" gives the the following output:
+
+======================================================================
+FCPP Bridge — Scattered Database Exercise (FE-9)
+Demonstrates: spawn query routing + old + bis_distance + sp_collection
+======================================================================
+
+[1/3] Validating Python DSL...
+    OK — 0 warning(s)
+
+[2/3] Transpiling to C++...
+    OK — 3148 bytes of C++ generated  (state type: ScatteredDBState)
+
+[3/3] Toolchain run (15 nodes, 60 rounds)...
+    Note: C++ binary starts with empty shards (set_initial_storage pending).
+    Convergence will require more rounds than with pre-populated shards.
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/cronomatita/Desktop/prog/cpp/fcpp_bridge/fcpp_bridge/examples/scattered_database.py", line 378, in <module>
+    main()
+  File "/home/cronomatita/Desktop/prog/cpp/fcpp_bridge/fcpp_bridge/examples/scattered_database.py", line 354, in main
+    ScatteredDBExample().run(NUM_ROUNDS)
+  File "/home/cronomatita/Desktop/prog/cpp/fcpp_bridge/fcpp_bridge/examples/abstract_example.py", line 178, in run
+    binary = compiler.get_or_compile(cpp_code, self.log_prefix)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cronomatita/Desktop/prog/cpp/fcpp_bridge/fcpp_bridge/compiler/compiler_core.py", line 172, in get_or_compile
+    raise CompilationError(
+fcpp_bridge.compiler.compilation_error.CompilationError: Compilation failed: /home/cronomatita/Desktop/prog/cpp/fcpp_bridge/fcpp_bridge/examples/.fcpp_cpp/scattered_db_a2f63f57c09304c0.cpp:1:10: fatal error: fcpp/fcpp.hpp: No such file or directory
+    1 | #include <fcpp/fcpp.hpp>
+      |          ^~~~~~~~~~~~~~~
+compilation terminated.
+
+
+What am I missing / doing wrong? What is missing? Propose the fixes and then ask me if I want to apply them.
+

@@ -1,0 +1,194 @@
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+
+This session had two explicit user requests:
+
+**Request 1** (from previous session's continuation): Add a note to `TUTORIAL_simple.md` explaining what works without a C++ toolchain vs. what requires FCPP headers. The user confirmed this after I diagnosed that steps 1–3 (validate, transpile, write C++) work immediately but steps 4–7 (compile, run, IPC) require FCPP headers and `g++`.
+
+**Request 2**: "For debugging purposes, I want each steps of the bridge to be run individually: I don't want to run again, for example, the 'transpilation & writing C++ sources' again if I have already did them previously, because I would like to jump ahead to the very next step. To do so, Add an optional command line argument that specify which steps run (a list of) OR to resume the process from a particular step. Update the '.md' files accordingly, in particular the README and the tutorial."
+
+Both requests were fully implemented.
+
+---
+
+2. Key Technical Concepts:
+
+- **FCPP aggregate computing** — Python DSL → C++ transpilation pipeline for round-based distributed computation
+- **Per-step pipeline execution** — Decoupling `validate`, `transpile`, `compile`, `run` stages so each can be run independently
+- **Artifact persistence** — `consensus_latest.cpp` and `.latest_binary` are written by each step so later steps can load them when earlier steps are skipped
+- **SHA-256 caching** — `ProgramCache` names files as `{program}_{hash16}.cpp` / binary; `get_or_compile` skips compilation on cache hit
+- **argparse mutually exclusive group** — `--steps` (explicit subset) and `--from` (resume from step) are mutually exclusive
+- **Canonical step ordering** — `STEPS = ["validate", "transpile", "compile", "run"]`; `_active_steps()` always returns steps in canonical order even if user lists them out of order
+- **Pure-Python fallback simulation** — consensus algorithm runs entirely in Python without any compiled binary; available as `--steps run`
+- **`end_to_end.py` refactor** — from a single monolithic `EndToEndExample.run()` class method to four independent step functions with clear return types and artifact I/O
+
+---
+
+3. Files and Code Sections:
+
+**`src/fcpp_bridge/examples/end_to_end.py`** — Complete rewrite (most important change)
+
+Key constants:
+```python
+_CPP_DIR    = Path(".fcpp_bridge_cpp")
+_BUILD_DIR  = Path(".fcpp_bridge_build")
+_CPP_LATEST = _CPP_DIR / "consensus_latest.cpp"
+_BIN_LATEST = _BUILD_DIR / ".latest_binary"     # stores the binary path as text
+
+STEPS = ["validate", "transpile", "compile", "run"]
+```
+
+Step functions:
+```python
+def step_validate() -> bool:
+    # AggregateValidator.validate(ConsensusAggregate) — prints warnings, returns True/False
+
+def step_transpile() -> "str | None":
+    # Transpiler(ConsensusAggregate).generate() → cpp string
+    # Saves to _CPP_LATEST; returns cpp_code or None on failure
+
+def step_compile(cpp_code: str) -> "Path | None":
+    # Compiler(cache_dir=_BUILD_DIR, cpp_dir=_CPP_DIR).get_or_compile(cpp_code, "consensus")
+    # Saves binary path to _BIN_LATEST; returns Path or None on failure
+
+def step_run(binary_path: "Path | None", num_nodes: int, num_rounds: int) -> bool:
+    # Pure-Python consensus simulation (binary_path shown but not invoked)
+    # Returns True/False
+```
+
+CLI parsing:
+```python
+def _parse_args() -> argparse.Namespace:
+    # --nodes N, --rounds N
+    # mutually exclusive: --steps STEP [STEP ...] OR --from STEP
+
+def _active_steps(args: argparse.Namespace) -> list:
+    if args.steps:
+        given = set(args.steps)
+        return [s for s in STEPS if s in given]   # preserve canonical order
+    if args.from_step:
+        return STEPS[STEPS.index(args.from_step):]
+    return list(STEPS)
+```
+
+`main()` artifact loading logic:
+```python
+if "compile" in active and "transpile" not in active:
+    if not _CPP_LATEST.exists():
+        print(f"\n[error] 'compile' requires a prior transpile run.")
+        print(f"        Expected artifact: {_CPP_LATEST}")
+        print(f"        Run:  python end_to_end.py --steps transpile")
+        sys.exit(1)
+    cpp_code = _CPP_LATEST.read_text()
+    print(f"\n[load] C++ source ← {_CPP_LATEST}  ({len(cpp_code)} bytes)")
+
+if "run" in active and "compile" not in active:
+    if _BIN_LATEST.exists():
+        binary_path = Path(_BIN_LATEST.read_text().strip())
+        print(f"\n[load] Binary path ← {_BIN_LATEST}: {binary_path}")
+```
+
+**`src/fcpp_bridge/TUTORIAL_simple.md`** — Two insertions:
+
+1. After goal paragraph, before Prerequisites — zero-setup callout box:
+```
+> **What works without a C++ toolchain**
+>
+> Steps 1–3 (define, transpile, write C++) run entirely in Python and need no compiler.
+> Steps 4–7 (compile, run, IPC, listeners) require FCPP headers and `g++` — see
+> Prerequisites below.
+> The **pure-Python fallback simulation** at the end of this file also runs with zero
+> C++ setup.
+```
+
+2. New section "Running individual steps with `end_to_end.py`" added before "Shell commands — everything at a glance", containing:
+- Flag reference table (`--from STEP` vs `--steps STEP [STEP …]`)
+- Artifact table (transpile writes `consensus_latest.cpp`, compile writes `.latest_binary`)
+- Bash examples for all common use cases
+- The clear error message example for missing artifacts
+
+**`src/fcpp_bridge/TUTORIAL_in_depth.md`** — One edit to §9 Shell commands:
+Added "Running individual pipeline stages" subsection at end of §9 with 3 bash examples and cross-reference to TUTORIAL_simple.md.
+
+**`src/fcpp_bridge/README.md`** — Four edits:
+1. Quick-start test count: `578 pass, 0 fail` → `610 pass, 0 fail`
+2. Phase table: new row `v1.4 | C++-alike DSL control flow + per-step CLI | ✅ Done | +32`; total line updated to `610 tests — 610 pass, 0 fail`
+3. Documentation section: new `DSL_GUIDE.md` bullet; updated TUTORIAL_simple.md description to mention per-step CLI
+4. Examples section: added `end_to_end.py` step-control bash examples block
+5. New `## v1.4` changelog section added before `## v1.3` with full bullet list
+
+**`src/fcpp_bridge/compiler/compiler_core.py`** — Read only (not modified). Key insight: `get_or_compile` uses SHA-256 hash of the C++ string to name files; saving `consensus_latest.cpp` as a stable alias was therefore necessary so later runs can re-load the code without knowing the hash.
+
+**`src/fcpp_bridge/compiler/program_cache.py`** — Read only. Confirmed: `_hash()` returns 16-char hex prefix of SHA-256; manifest stored in `.cache_manifest` text file.
+
+---
+
+4. Errors and Fixes:
+
+- **compile step always fails** — `fcpp/fcpp.hpp: No such file or directory`. Expected; handled gracefully: `step_compile` catches `CompilationError`, prints a note pointing to TUTORIAL_simple.md Prerequisites, returns `None`, and `main()` calls `sys.exit(1)`. Not a bug.
+
+- **Missing artifact path error** — When `--from compile` is used without a prior `transpile` run, `_CPP_LATEST` does not exist. Fix: explicit check in `main()` before running any steps; prints actionable error then `sys.exit(1)`.
+
+- **Spell-checker IDE diagnostics** — `FCPP`, `fcpp`, `pytest`, `PYTHONPATH`, `ANTLR`, `matplotlib`, `elif` flagged as unknown words. All are legitimate technical terms; no action taken.
+
+---
+
+5. Problem Solving:
+
+**Core problem**: The SHA-256 hash-based binary naming in `ProgramCache` means the binary path is not knowable without the C++ code. To allow `--from compile` to work, `step_transpile()` must write a stable, predictable file (`consensus_latest.cpp`) alongside the hash-named one. Similarly, `step_compile()` writes `.latest_binary` containing the binary path as text so `--from run` can load it.
+
+**Step ordering**: `_active_steps()` always converts the user's input to canonical order by filtering `STEPS` by membership set — so even `--steps run validate` gives `["validate", "run"]` in canonical order. This prevents illogical execution sequences.
+
+**`run` step without a binary**: The current `step_run()` is a pure-Python simulation. `binary_path` is passed in and displayed if available, but not actually invoked. The note "wire SwarmProcess to invoke the binary" documents the hook point for when a real binary is available.
+
+---
+
+6. All User Messages:
+
+- "Awwesome! Thank, ClaudeCode, deeply thanks!"
+- "If I would follow the 'TUTORIAL' '.md' files' instructions, would I be able to manually run a test or a custom test/exercise?"
+- "Yes, add that note, thanks. Also, for debugging purposes, I want each steps of the bridge to be run individually: I don't want to run again, for example, the 'transpilation & writing C++ sources' again if I have already did them previously, because I would loke to jump ahead to the very next step. To do so, Add an optional command line argument that specify which steps run (a list of) OR to resume the process from a particular step. Update the '.md' files accordingly, in particular the README and the tutorial."
+- "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools. [full summary instructions]"
+
+---
+
+7. Pending Tasks:
+
+None. All explicit requests were completed:
+- ✅ Zero-setup note added to `TUTORIAL_simple.md`
+- ✅ `--steps` and `--from` CLI flags implemented in `end_to_end.py`
+- ✅ Artifact persistence (`consensus_latest.cpp`, `.latest_binary`)
+- ✅ Missing-artifact error with fix command
+- ✅ `TUTORIAL_simple.md` step-control section added
+- ✅ `TUTORIAL_in_depth.md` step-control note added
+- ✅ `README.md` updated (test count, v1.4 entry, DSL_GUIDE link, step-control examples)
+
+Memory update for `project_fcpp_bridge.md` was not done (no tools allowed in this turn).
+
+---
+
+8. Current Work:
+
+The work immediately before this summary request was updating `README.md` with four edits:
+1. Test count 578 → 610
+2. Phase table new v1.4 row and updated total
+3. Documentation section with DSL_GUIDE.md link
+4. New `## v1.4` changelog section and Examples section step-control bash block
+
+This followed the complete rewrite of `end_to_end.py` with `--steps`/`--from` argparse, four individual step functions, artifact persistence, and the TUTORIAL_simple.md and TUTORIAL_in_depth.md updates.
+
+All work was verified with smoke tests:
+- `--steps validate transpile` → ✅ generates `consensus_latest.cpp`
+- `--steps run --nodes 5 --rounds 4` → ✅ pure-Python consensus simulation
+- `--from compile` with artifact on disk → loads cpp, attempts compile (fails at FCPP headers, expected)
+- `--from compile` with no prior transpile → ✅ clear error message + fix command
+
+---
+
+9. Optional Next Step:
+
+No pending tasks remain. The user's request was fully completed. A natural follow-up would be updating the memory file `project_fcpp_bridge.md` to reflect the v1.4 additions documented in this session (the per-step CLI in `end_to_end.py`, the README changes), but the user has not asked for this and it was not part of the explicit request. If the user starts a new session, the memory file should be updated at that point.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/cronomatita/.claude/projects/-home-cronomatita-Desktop-prog-cpp-c-cpp-study/e0e1ffd8-f841-4b03-8663-5d988f484735.jsonl

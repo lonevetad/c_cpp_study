@@ -42,3 +42,22 @@
 
 # Claude configuration
 **/.claude/
+
+# build, venv, imported libraries ...
+
+fcpp_clone_*/
+*/fcpp_clone_*/
+**/fcpp_clone_*/
+fcpp_clone_GITIGNORE_ME/
+*/fcpp_clone_GITIGNORE_ME/
+**/fcpp_clone_GITIGNORE_ME/
+bin/
+bin/*
+*/bin/
+**/bin/
+
+*/expr_eval_py_env/
+**/expr_eval_py_env/
+**/lib64
+**/__pycache__
+**/lib/python*

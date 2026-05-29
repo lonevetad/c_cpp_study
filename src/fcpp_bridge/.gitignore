@@ -1,0 +1,43 @@
+# Generated C++ code
+cpp_transpiled/
+*.cpp
+*.hpp
+
+# Build artifacts
+build/
+*.o
+*.so
+*.dll
+*.a
+*.exe
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# FCPP source (if cloned locally)
+fcpp_clone_GITIGNORE_ME/
+
+# ANTLR generated stubs (regenerate with grammar/generate_antlr.py --download)
+grammar/__antlr_gen/
+grammar/antlr-*.jar
+
+# runtime
+*.log

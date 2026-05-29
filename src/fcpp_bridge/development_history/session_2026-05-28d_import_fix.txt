@@ -1,0 +1,132 @@
+SESSION RECOVERY — 2026-05-28 (third session of the day)
+Branch: bugfix/fcpp_bridge/it1
+
+=== WHAT WAS DONE IN THIS SESSION ===
+
+Part 1 — PYTHONPATH documentation
+-----------------------------------
+Problem:
+  The README, TUTORIAL_simple.md and TUTORIAL_in_depth.md mentioned PYTHONPATH
+  only as bare one-liners in tables or code comments, with no explanation of
+  WHY it is needed or how to adjust the path for different working directories.
+
+Fix — added a blockquote callout to each file:
+  README.md
+    - Fixed Quick Start comment: "611 pass" → "616 pass"
+    - Added > **`PYTHONPATH` requirement** blockquote after the Quick Start
+      code block (before "## Overview")
+
+  TUTORIAL_simple.md
+    - Added > **`PYTHONPATH` requirement** blockquote after the Prerequisites
+      table (before the "No C++ toolchain?" note)
+
+  TUTORIAL_in_depth.md
+    - Added > **`PYTHONPATH` requirement** blockquote within §1 Prerequisites,
+      after the `pip install fcpp_bridge` line
+
+  Each blockquote explains:
+    1. fcpp_bridge is not on PyPI — it lives in src/fcpp_bridge/ in this repo
+    2. export PYTHONPATH=... (persistent) vs PYTHONPATH=... python ... (inline)
+    3. From src/fcpp_bridge/, use PYTHONPATH=.. (one level up = src/)
+
+Part 2 — Example import fix (v1.8.5)
+--------------------------------------
+Problem discovered while running:
+  cd ~/Desktop/prog/cpp/c_cpp_study/src/fcpp_bridge
+  PYTHONPATH=.. /usr/bin/python3 examples/worker_role_assignment.py
+
+Error:
+  ModuleNotFoundError: No module named 'examples'
+
+Root cause:
+  All 6 example files contained:
+    from examples._example_utils import report_validation, report_transpilation
+
+  This bare `examples` import requires src/fcpp_bridge/ to be on sys.path so
+  Python can find `examples` as a top-level package.  Neither invocation style
+  puts src/fcpp_bridge/ on sys.path:
+    - PYTHONPATH=..  (from src/fcpp_bridge/) → sys.path gets src/
+    - PYTHONPATH=src (from repo root)        → sys.path gets src/
+  In both cases Python sees fcpp_bridge/ under src/, but not examples/ directly.
+
+Fix:
+  Changed the import in all 6 example files:
+    from examples._example_utils import ...
+  →
+    from fcpp_bridge.examples._example_utils import ...
+
+  Files modified:
+    examples/spreading_collection.py
+    examples/channel_broadcast.py
+    examples/collection_compare.py
+    examples/message_dispatch.py
+    examples/chain_decaying.py
+    examples/worker_role_assignment.py
+
+  Verified: PYTHONPATH=.. /usr/bin/python3 examples/worker_role_assignment.py
+  runs correctly from src/fcpp_bridge/.
+
+Documentation updated (v1.8.5):
+  README.md
+    - Added v1.8.5 row to Project Phases table
+  development_history/EXAMPLES_JOURNAL.md
+    - Added v1.8.5 bullet in worker_role_assignment notes section
+
+=== CURRENT STATE (end of session) ===
+
+Branch: bugfix/fcpp_bridge/it1
+Test count: 616 pass, 0 fail
+Latest version: v1.8.5
+
+Run the worker_role_assignment example from src/fcpp_bridge/:
+  PYTHONPATH=.. /usr/bin/python3 examples/worker_role_assignment.py
+
+Or from the repo root:
+  PYTHONPATH=src /usr/bin/python3 src/fcpp_bridge/examples/worker_role_assignment.py
+
+Run tests (always from repo root):
+  PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -q
+
+=== HOW TO RESUME ===
+
+  cd <repo-root>
+  git checkout bugfix/fcpp_bridge/it1
+
+  # Verify tests still pass:
+  PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -q
+  # Expected: 616 passed
+
+  # Check planned v1.9 work:
+  cat src/fcpp_bridge/development_history/V1_9_PLAN.md
+
+=== KEY DESIGN DECISIONS ===
+
+1. Fully-qualified import path (not relative import)
+   Relative imports (from ._example_utils import ...) only work when the file
+   is executed as a module (python -m fcpp_bridge.examples.worker_role_assignment).
+   Since the examples are run as scripts (__name__ == '__main__'), relative imports
+   raise ImportError. The fully-qualified path from fcpp_bridge.examples._example_utils
+   works in both script mode and module mode.
+
+2. sys.path layout under PYTHONPATH=..
+   When running from src/fcpp_bridge/:
+     sys.path[0] = src/fcpp_bridge/examples/  (the script's directory)
+     sys.path also includes src/  (from PYTHONPATH=..)
+   fcpp_bridge is found at src/fcpp_bridge/, so fcpp_bridge.examples resolves
+   correctly. The bare name 'examples' was never findable.
+
+3. No __init__.py trick possible
+   An __init__.py in examples/ cannot fix the sys.path problem: it only marks
+   the directory as a package but does not add its parent to sys.path. The
+   parent (src/fcpp_bridge/) must be explicitly on the path for 'examples' to
+   be a top-level importable name — which would require PYTHONPATH=../..
+   from src/fcpp_bridge/, making the two-entry path requirement (src/ for
+   fcpp_bridge AND src/fcpp_bridge/ for examples) ugly and fragile.
+
+=== KNOWN REMAINING WORK (v1.9) ===
+
+Full plan: development_history/V1_9_PLAN.md
+  - Receiver UID fix: replace spawn key (self_uid(), 0) with
+    (self_uid(), receiver_uid) where receiver_uid = broadcast(is_receiver, self_uid())
+  - frozenset → set_t transpilation
+  - min_hood tuple → std::make_tuple

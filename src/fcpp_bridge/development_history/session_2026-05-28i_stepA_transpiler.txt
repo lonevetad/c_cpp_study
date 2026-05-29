@@ -1,0 +1,97 @@
+SESSION RECORD — 2026-05-28i
+Topic: V1_9_PLAN Step A — Transpiler completeness
+Branch: bugfix/fcpp_bridge/it1
+Tests: 629 pass, 0 fail  (was 624; +5 new)
+
+═══════════════════════════════════════════════════════════════════════════
+SUMMARY OF WORK
+═══════════════════════════════════════════════════════════════════════════
+
+  A.2 — frozenset → set_t transpilation
+    Added handler in PythonAstVisitor.visit_Call BEFORE generic arg-visiting:
+      frozenset({x})  → set_t{x}
+      frozenset()     → set_t{}
+    Checks node.args[0] is ast.Set and visits each element independently.
+    Inner ast.Set literal has no dedicated visitor so must be handled before
+    the generic args = [self.visit(arg) ...] line.
+
+  A.3 — min_hood/max_hood + Tuple → std::make_tuple
+    Added heuristic in visit_Call: detects single ast.Tuple argument to
+    min_hood or max_hood and emits std::make_tuple(...).
+    Fixes the C++ comma-expression pitfall: (a, b) evaluates to b, not tuple.
+    Remaining manual post-step: callers that need a specific component of the
+    result still require std::get<N>(var) in the generated C++ by hand.
+    Also tracks min_hood/max_hood in used_primitives so the header include
+    is emitted correctly.
+
+  A.1 — receiver_uid = broadcast(is_receiver, self_uid()) in worker_role_assignment.py
+    Added as step 5 (broadcast) between sp_collection and spawn.
+    Renamed old steps 5/6/7 → 6/7/8 throughout comments and docstrings.
+    Fixed spawn key from (self_uid(), 0) → (self_uid(), receiver_uid).
+    Updated module-level docstring (7 steps → 8 steps) and compute() docstring.
+    The broadcast primitive distributes RECEIVER nodes' own UIDs outward so
+    every node knows the nearest RECEIVER's UID before constructing the spawn key.
+
+  A.4 — nbr_uid docstring note
+    nbr_uid is confirmed present in _FCPP_PRIMITIVES (line 15 of _constants.py).
+    No code change needed; the distinction between self_uid() and nbr_uid() is
+    already clear from the existing special-case comment in visit_Call.
+
+  TESTS (+5):
+    test_frozenset_with_element     frozenset({self_uid()}) → set_t{node.uid}
+    test_frozenset_empty            frozenset() → set_t{}
+    test_min_hood_tuple_to_make_tuple  min_hood((x, y)) → min_hood(CALL, std::make_tuple(x, y))
+    test_max_hood_tuple_to_make_tuple  max_hood((a,b,c)) → max_hood(CALL, std::make_tuple(a, b, c))
+    test_broadcast_with_self_uid    broadcast(is_receiver, self_uid()) → broadcast(CALL, is_receiver, node.uid)
+
+═══════════════════════════════════════════════════════════════════════════
+FILES CHANGED
+═══════════════════════════════════════════════════════════════════════════
+
+src/fcpp_bridge/transpiler/python_ast_visitor.py
+    visit_Call: added frozenset handler and min_hood/max_hood+Tuple handler
+    before the generic args = [...] line
+
+src/fcpp_bridge/tests/transpiler/test_python_ast_visitor.py
+    +5 tests in "Step A — Transpiler completeness" section (lines 916–951)
+
+src/fcpp_bridge/examples/worker_role_assignment.py
+    Module docstring: 7 steps → 8 steps; step list updated (broadcast added as step 5)
+    compute() docstring: 7 → 8 steps
+    Added step 5 (broadcast): receiver_uid = broadcast(is_receiver, self_uid())
+    Step 6 comment updated: spawn key (self_uid(), 0) → (self_uid(), receiver_uid)
+    Steps 6/7/8 comments renumbered from old 5/6/7
+
+src/fcpp_bridge/development_history/node_uid__placeholder_flagging.md
+    §1 header: updated to v1.9 Step A
+    §1 call-sites table: spawn key row updated (receiver now ✅ fixed)
+    §1 fix-options table: broadcast option marked ✅ Done in v1.9 Step A
+    §3.3: marked ✅ Resolved; updated with new transpiler behaviour note
+    §3.5: marked ✅ Partially resolved; std::get<N> extraction remains manual
+
+src/fcpp_bridge/development_history/WORKER_ROLE_ASSIGNMENT.md
+    Algorithm section header: 7 → 8 steps
+    Algorithm table: added step 5 (broadcast); renumbered spawn/old/match as 6/7/8
+    DSL Features "self_uid()" section: spawn key updated; generated C++ updated
+    spawn+old section: renamed to "broadcast + spawn + old"; removed placeholder note
+
+═══════════════════════════════════════════════════════════════════════════
+NEXT: SESSION 2026-05-28j — STEP B EXECUTION
+═══════════════════════════════════════════════════════════════════════════
+
+Step B actions (in execution order):
+  B.1  print → get_logger() in: compiler_core.py, swarm_process.py,
+               physical_node.py, device_manager.py, runtime_generator.py
+       (Note: text_dashboard.py and grammar/generate_antlr.py are exempt)
+  B.3  PhysicalNode.connect() RAII-style reset:
+         - self._connected = False before allocation
+         - try/except rollback on failure
+         - wrap get_state()/send_command() callers in _IpcNodeBase to set
+           _connected=False on ConnectionError/OSError
+  B.2  _example_utils.py: the report_validation() helper already exists from
+       v1.8; check if report_transpilation() helper also exists; if so, B.2
+       is done.  Add build_positions() if not already present.
+  B.4  Tests: test_physical_node.py +3 (RAII scenarios: backend raises on
+               connect, partial init, error during get_state)
+       Session record: session_<date>_stepB_foundations.txt
+       Memory update: project_fcpp_bridge.md

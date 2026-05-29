@@ -1,0 +1,121 @@
+SESSION RECORD — 2026-05-28l
+Topic: V1_9_PLAN Step D — Runtime and physical-device support
+Branch: bugfix/fcpp_bridge/it1
+Tests: 655 pass, 0 fail  (was 647; +8 new)
+
+═══════════════════════════════════════════════════════════════════════════
+SUMMARY OF WORK
+═══════════════════════════════════════════════════════════════════════════
+
+  D.1 — ActivePingStrategy: C++ ping handler in template
+
+    Added the ping handler to SwarmSimulator constructor in
+    RuntimeGenerator.main_template_header():
+      ipc_server_.register_handler("ping", [](const json& req) {
+          json resp;
+          resp["status"] = "pong";
+          resp["node_id"] = req.value("node_id", -1);
+          return resp;
+      });
+    Handler registered at construction time; no FCPP round is executed.
+
+    Updated ActivePingStrategy docstring (class + module-level):
+    - Old: "Requires the compiled FCPP binary to implement the ping handler"
+    - New: "The ping handler is registered automatically by SwarmSimulator
+           constructor in main_template.hpp (see RuntimeGenerator)"
+
+  D.2 — DeviceManager.accept_registrations(port)
+
+    Added to device_manager.py:
+      accept_registrations(port, on_registered=None)
+        — starts daemon HTTP server thread
+        — POST /register with JSON payload → add_physical(name, host, port, backend)
+        — calls on_registered(name, node) if provided
+        — idempotent: no-op if already running
+      stop_accepting_registrations()
+        — stops and joins the server thread; clears all fields
+      _registration_server_loop()
+        — http.server.HTTPServer with 0.5s timeout polling stop_event
+        — _Handler.do_POST: handles /register (200 ok / 400 error / 404 unknown path)
+        — log_message() overridden to suppress BaseHTTPServer stderr
+
+    Added to DeviceManager.__init__:
+      _registration_thread, _registration_stop_event,
+      _registration_port, _registration_callback
+
+    Also updated __exit__ to call stop_accepting_registrations() before close_all().
+
+    Added import: import json as _json, import threading at top of file.
+
+  TESTS (+8):
+    test_liveness_strategy.py (+3):
+      test_active_ping_bad_response_returns_false
+        Backend returns {"status":"error"} → node reported dead
+      test_ping_handler_present_in_cpp_template
+        RuntimeGenerator.main_template_header() contains "ping", "pong",
+        "register_handler"
+      test_active_ping_docstring_no_longer_requires_binary
+        Docstring has "registered automatically", not "Requires"
+
+    test_device_manager.py (+5):
+      test_accept_registrations_adds_device
+        Valid POST /register → device in device_names, status 200
+      test_accept_registrations_invalid_json_returns_400
+        POST with missing fields → 400
+      test_accept_registrations_wrong_path_returns_404
+        POST to /other → 404
+      test_accept_registrations_calls_on_registered_callback
+        on_registered(name, node) fires after valid registration
+      test_stop_accepting_registrations_clears_thread
+        After stop, _registration_thread is None
+
+═══════════════════════════════════════════════════════════════════════════
+FILES CHANGED
+═══════════════════════════════════════════════════════════════════════════
+
+src/fcpp_bridge/runtime/runtime_generator.py
+    main_template_header(): ping handler in SwarmSimulator constructor;
+    IpcServer ipc_server_ member added
+
+src/fcpp_bridge/ipc/liveness_strategy.py
+    module docstring: ActivePingStrategy entry updated (no "Requires")
+    ActivePingStrategy class docstring: updated ("registered automatically")
+
+src/fcpp_bridge/ipc/device_manager.py
+    imports: added json as _json, threading, Callable
+    __init__: 4 new registration-related instance variables
+    accept_registrations() + stop_accepting_registrations() + _registration_server_loop() — NEW
+    __exit__: calls stop_accepting_registrations() before close_all()
+
+src/fcpp_bridge/tests/ipc/test_liveness_strategy.py  +3 tests
+src/fcpp_bridge/tests/ipc/test_device_manager.py     +5 tests
+
+═══════════════════════════════════════════════════════════════════════════
+NEXT: SESSION 2026-05-28m — STEP E EXECUTION
+═══════════════════════════════════════════════════════════════════════════
+
+Step E: AbstractExample toolchain bridge
+
+Files to modify:
+  src/fcpp_bridge/examples/abstract_example.py
+    - Add aggregate_class @property (abstract)
+    - Remove round_step(), initial_states() from abstract interface
+    - Add build_dir, cpp_dir optional properties with defaults
+    - Rewrite run() per plan §E.2
+    - Update on_round_complete signature: (round_num, snapshot: SwarmSnapshot)
+    - Verify SwarmProcess.latest_snapshot() exists; add if missing
+
+Files to check first:
+  src/fcpp_bridge/ipc/swarm_process.py  — look for latest_snapshot() method
+  src/fcpp_bridge/examples/abstract_example.py — current interface
+
+Tests to write:
+  src/fcpp_bridge/tests/examples/test_abstract_example.py — NEW, +10 tests
+  (mock Transpiler, Compiler, SwarmProcess; verify run() lifecycle)
+
+Docs:
+  development_history/abstract_example_toolchain.md — NEW
+  development_history/EXAMPLES_JOURNAL.md — v2.1 section
+  DSL_GUIDE.md — update "Running examples"
+  README.md — update example usage section
+  TUTORIAL_simple.md — toolchain invocation note

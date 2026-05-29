@@ -1,0 +1,155 @@
+SESSION RECORD — 2026-05-28 (fifth session of the day, part 2 of 2)
+Branch: bugfix/fcpp_bridge/it1
+
+=== WHAT WAS DONE IN THIS SESSION ===
+
+This session performed a large multi-step refactoring + new example creation.
+
+Part 1 — Examples Cohesiveness Plan
+-------------------------------------
+Created: src/fcpp_bridge/development_history/examples_cohesiveness.md
+
+Analysed the 6 main examples (spreading_collection, channel_broadcast,
+collection_compare, message_dispatch, chain_decaying, worker_role_assignment)
+and identified three repeated-code patterns:
+  1. neighbors_of inner function — duplicated in all 6
+  2. STATUS_BORDER/INTERNAL/TERMINATED constants — duplicated in 2
+  3. Node-position initialization — near-identical in 5 (lower priority)
+
+Part 2 — _example_utils.py additions
+---------------------------------------
+File: src/fcpp_bridge/examples/_example_utils.py
+Added:
+  - SPAWN_STATUS_BORDER = 0
+  - SPAWN_STATUS_INTERNAL = 1
+  - SPAWN_STATUS_TERMINATED = 2
+  - neighbors_of(positions, nid, comm) -> list[int]
+  - build_positions(n, side_x, side_y, seed) -> dict[int, tuple]
+
+Part 3 — Refactored 6 existing examples
+------------------------------------------
+In all 6 main examples:
+  - Added neighbors_of to the _example_utils import
+  - Removed the local def neighbors_of(...) inside _demo_simulate()
+  - Changed all neighbors_of(nid) → neighbors_of(positions, nid, COMM)
+
+In message_dispatch.py and worker_role_assignment.py additionally:
+  - Added SPAWN_STATUS_* imports
+  - Changed STATUS_* local constants to aliases of SPAWN_STATUS_*
+
+Verified: 616 tests pass, all 6 examples import cleanly.
+
+Part 4 — communication_roles_assignment.py (NEW EXAMPLE)
+----------------------------------------------------------
+Created: src/fcpp_bridge/examples/communication_roles_assignment.py
+
+CommunicationRole enum:
+  UNASSIGNED(0), SENDER(1), REPEATER(2), RECEIVER(3)
+
+Configuration (all configurable):
+  NODES=15, SINK_POINTS=2, SOURCE_POINTS=3
+  COMM=100.0, SIDE=213, NUM_ROUNDS=60, MSG_TICKS_INTERVAL=10
+  ISOLATION_THRESHOLD=0.20, MAX_MIGRATION_ITERS=50, MAX_POINT_PLACEMENT_ITERS=10
+
+Setup functions (pure Python, not aggregate):
+  _build_and_migrate_network() — places nodes randomly, migrates isolated ones
+  _place_points() — places sink/source points near anchor nodes (no conflicts)
+  _assign_initial_roles() — Receiver: nearest to sink, Sender: nearest to source
+  _setup_network() — orchestrates the above; raises ValueError if SINK+SOURCE > NODES
+
+DSL aggregate function (7 steps):
+  1. bis_distance(is_receiver) — gradient toward Receivers
+  2. bis_distance(is_sender)   — gradient from Senders
+  3. nbr + min_hood            — Sender election
+  4. old(0, t+1)               — round counter
+  5. broadcast(dist_from_sender, payload) — propagate Sender messages
+  6. old({}, accumulate)       — received-message log at Receivers
+  7. match/case                — per-role task + state assembly
+
+Demo simulation output (15 nodes, 60 rounds, seed=42):
+  2 Receivers, 3 Senders, 10 Repeaters
+  12 distinct messages delivered to receivers (6 per receiver)
+  3272 bytes of C++ generated
+
+Part 5 — FUTURE_EXERCISES.md (NEW FILE)
+------------------------------------------
+Created: src/fcpp_bridge/development_history/FUTURE_EXERCISES.md
+
+Contains 8 future exercise hints (FE-1 through FE-8):
+  FE-1: Multiple independent communication instances via spawn
+  FE-2: Dynamic sink/source points
+  FE-3: Mobile nodes searching for points
+  FE-4: Area partition + scanning assignment
+  FE-5: Dynamic Receiver UID fix (v1.9 follow-up)
+  FE-6: Distributed min-UID election (generalisation)
+  FE-7: Store-and-forward Repeater with TTL
+  FE-8: Adaptive communication range (power control)
+
+Part 6 — EXAMPLES_JOURNAL.md updates
+---------------------------------------
+Added:
+  - New row in Status table: communication_roles_assignment.py ✅ Done
+  - Full algorithm notes section for communication_roles_assignment.py
+  - Note about _example_utils refactoring (neighbors_of, SPAWN_STATUS_*)
+  - Cross-references to examples_cohesiveness.md and FUTURE_EXERCISES.md
+
+=== CURRENT STATE ===
+
+Branch: bugfix/fcpp_bridge/it1
+Test count: 616 pass, 0 fail
+Latest version: v1.9 (communication_roles_assignment + shared helpers refactoring)
+
+Examples in src/fcpp_bridge/examples/ (main examples with full simulation):
+  spreading_collection.py       ✅ refactored (shared neighbors_of)
+  channel_broadcast.py          ✅ refactored (shared neighbors_of)
+  collection_compare.py         ✅ refactored (shared neighbors_of)
+  message_dispatch.py           ✅ refactored (shared neighbors_of + SPAWN_STATUS_*)
+  chain_decaying.py             ✅ refactored (shared neighbors_of)
+  worker_role_assignment.py     ✅ refactored (shared neighbors_of + SPAWN_STATUS_*)
+  communication_roles_assignment.py  ✅ NEW
+
+=== HOW TO RESUME ===
+
+  cd <repo-root>
+  git checkout bugfix/fcpp_bridge/it1
+
+  # Verify tests still pass:
+  PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -q
+  # Expected: 616 passed
+
+  # Run the new example:
+  cd src/fcpp_bridge
+  PYTHONPATH=.. /usr/bin/python3 examples/communication_roles_assignment.py
+
+  # Next planned work: see development_history/FUTURE_EXERCISES.md
+  # v1.9 plan for transpiler gaps: see development_history/V1_9_PLAN.md
+
+=== KEY DESIGN DECISIONS ===
+
+1. neighbors_of signature: (positions, nid, comm) — takes positions dict as first arg
+   so the function is pure (no closure over outer variables) and works for any
+   deployment. Iterates positions.keys() instead of range(N) to avoid hardcoding
+   the node count.
+
+2. SPAWN_STATUS_* shared constants + local STATUS_* aliases:
+   Aliases keep the existing examples' DSL code unchanged (STATUS_BORDER etc. still
+   work), while the new example can use either form. No CALL-counter impact.
+
+3. Role stability in communication_roles_assignment:
+   Roles are set once in _assign_initial_roles() (pure Python, before simulation).
+   The aggregate compute() reads role from self_state.role — never changes it.
+   This matches the spec: "nodes won't change their CommunicationRole".
+   The aggregate function nonetheless demonstrates the full role-election primitives
+   (nbr + min_hood) even though they converge immediately to the pre-set roles.
+
+4. message payload = (sender_uid, round_tick, dist_to_nearest_source):
+   round_tick serves as the message counter; self_uid() (→ node.uid in C++) is the
+   sender identifier. dist_to_nearest_source is dummy payload data showing the
+   Sender's context. Future exercises can replace this with real data.
+
+5. broadcast vs spawn for message routing:
+   broadcast(dist_from_sender, payload) was chosen (not spawn) because:
+   a) the spec suggests broadcast ("most likely, the broadcast");
+   b) the new example already demonstrates spawn indirectly through worker_role_assignment;
+   c) broadcast is simpler to explain for the single-channel scenario.
+   spawn would be needed for FE-1 (multiple independent channels).

@@ -1,0 +1,6 @@
+# ANTLR4 Python3 runtime — required to use the generated parser stubs.
+# Install in your project venv after running generate_antlr.py:
+#
+#   pip install -r grammar/requirements_antlr.txt
+#
+antlr4-python3-runtime==4.13.1

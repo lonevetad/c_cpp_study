@@ -1,0 +1,91 @@
+SESSION CHECKPOINT #1 — 2026-05-28 (fifth session of the day)
+Branch: bugfix/fcpp_bridge/it1
+
+=== WHAT WAS DONE UP TO THIS CHECKPOINT ===
+
+Goal: examples folder refactoring + new communication_roles_assignment.py example
+
+Step 1 — examples_cohesiveness.md (DONE)
+-----------------------------------------
+Created: src/fcpp_bridge/development_history/examples_cohesiveness.md
+  - Inventory of 6 main examples (scope)
+  - Identified 3 repeated-code patterns:
+    1. neighbors_of inner function (in ALL 6 examples)
+    2. STATUS_BORDER/INTERNAL/TERMINATED constants (in 2 examples)
+    3. Node-position initialization (5 examples; low priority)
+  - Execution order plan
+  - Out-of-scope items documented
+
+Step 2 — _example_utils.py additions (DONE)
+---------------------------------------------
+File: src/fcpp_bridge/examples/_example_utils.py
+Added:
+  - SPAWN_STATUS_BORDER = 0
+  - SPAWN_STATUS_INTERNAL = 1
+  - SPAWN_STATUS_TERMINATED = 2
+  - neighbors_of(positions, nid, comm) -> list[int]
+  - build_positions(n, side_x, side_y, seed) -> dict[int, tuple[float, float]]
+
+Step 3 — Refactored 6 existing examples (DONE)
+------------------------------------------------
+In each file:
+  - Added neighbors_of to the _example_utils import
+  - Removed the local def neighbors_of(...) inside _demo_simulate()
+  - Changed all neighbors_of(nid) calls → neighbors_of(positions, nid, COMM)
+
+For message_dispatch.py and worker_role_assignment.py additionally:
+  - Added SPAWN_STATUS_* imports
+  - Changed local STATUS_* constants to be aliases:
+    STATUS_BORDER = SPAWN_STATUS_BORDER  etc.
+
+Files modified:
+  examples/spreading_collection.py
+  examples/channel_broadcast.py
+  examples/collection_compare.py
+  examples/chain_decaying.py
+  examples/message_dispatch.py
+  examples/worker_role_assignment.py
+
+Verified:
+  616 tests pass (no regressions)
+  All 6 examples import cleanly under PYTHONPATH=src
+
+=== CURRENT STATE ===
+
+Branch: bugfix/fcpp_bridge/it1
+Test count: 616 pass, 0 fail
+Latest version: v1.8.5 (still — refactoring does not bump version;
+                         the new example will introduce v1.9 when complete)
+
+=== REMAINING WORK (to complete this session) ===
+
+4. Create communication_roles_assignment.py
+   - CommunicationRole enum: UNASSIGNED(0), SENDER(1), REPEATER(2), RECEIVER(3)
+   - Node setup: NODES=15, SINK_POINTS=2, SOURCE_POINTS=3
+   - Isolation check: if >20% isolated → migrate (max 50 iterations)
+   - Sink/source point placement: random within COMM of anchor node
+   - Aggregate DSL: bis_distance x2, nbr, min_hood, old x2, broadcast, match/case
+   - See full spec in provided_prompt.txt lines 312-355
+
+5. Create FUTURE_EXERCISES.md
+
+6. Update EXAMPLES_JOURNAL.md
+
+7. Save session checkpoint #2 + update memory (version bump to v1.9.0 or v1.8.6)
+
+=== HOW TO RESUME (if interrupted before step 4) ===
+
+  cd <repo-root>
+  git checkout bugfix/fcpp_bridge/it1
+
+  # Verify state:
+  PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -q
+  # Expected: 616 passed
+
+  # Verify refactoring:
+  PYTHONPATH=src /usr/bin/python3 -c "import fcpp_bridge.examples.worker_role_assignment"
+  # Expected: no error
+
+  # Next step: create communication_roles_assignment.py
+  # Full spec: src/fcpp_bridge/provided_prompt.txt lines 312-355
+  # Plan: src/fcpp_bridge/development_history/examples_cohesiveness.md

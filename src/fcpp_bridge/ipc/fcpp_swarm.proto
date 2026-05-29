@@ -1,0 +1,79 @@
+// FCPP Swarm gRPC service definition
+// Phase 4: Runtime & IPC — gRPC backend
+//
+// Generate Python stubs:
+//   python -m grpc_tools.protoc \
+//       -I src/fcpp_bridge/ipc \
+//       --python_out=src/fcpp_bridge/ipc \
+//       --grpc_python_out=src/fcpp_bridge/ipc \
+//       src/fcpp_bridge/ipc/fcpp_swarm.proto
+//
+// Generate C++ server stubs:
+//   protoc -I src/fcpp_bridge/ipc \
+//       --cpp_out=src/fcpp_bridge/ipc \
+//       --grpc_out=src/fcpp_bridge/ipc \
+//       --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) \
+//       src/fcpp_bridge/ipc/fcpp_swarm.proto
+
+syntax = "proto3";
+
+package fcpp_swarm;
+
+// ─── Service ────────────────────────────────────────────────────────────────
+
+service SwarmService {
+    // Send a control command to the swarm (step, add_nodes, remove_nodes …)
+    rpc SendCommand (CommandRequest) returns (CommandResponse);
+
+    // Request the current swarm snapshot (all node states at this round)
+    rpc GetState (StateRequest) returns (SwarmStateResponse);
+
+    // Subscribe to a continuous stream of state updates (one message per round)
+    rpc StreamState (StateRequest) returns (stream SwarmStateResponse);
+
+    // Add nodes to the running swarm
+    rpc AddNodes (AddNodesRequest) returns (CommandResponse);
+
+    // Remove nodes from the running swarm
+    rpc RemoveNodes (RemoveNodesRequest) returns (CommandResponse);
+}
+
+// ─── Messages ────────────────────────────────────────────────────────────────
+
+message CommandRequest {
+    string cmd   = 1;  // "step" | "get_state" | "add_nodes" | "remove_nodes"
+    int32  count = 2;  // used by add_nodes / remove_nodes
+    bytes  data  = 3;  // optional JSON payload for custom commands
+}
+
+message CommandResponse {
+    bool   success = 1;
+    string message = 2;
+    bytes  data    = 3;  // optional JSON response payload
+}
+
+message StateRequest {
+    int32 from_round = 1;  // 0 = latest; > 0 = subscribe from that round
+}
+
+message NodeStateMessage {
+    int32  id        = 1;
+    bytes  state_json = 2;  // JSON-serialised state (type depends on program)
+    double timestamp  = 3;
+}
+
+message SwarmStateResponse {
+    int32                   round_number = 1;
+    double                  sim_time     = 2;
+    repeated NodeStateMessage nodes      = 3;
+}
+
+message AddNodesRequest {
+    int32 count    = 1;
+    bytes metadata = 2;  // optional JSON metadata per batch
+}
+
+message RemoveNodesRequest {
+    repeated int32 node_ids = 1;  // specific IDs; empty = remove last N
+    int32          count    = 2;  // used when node_ids is empty
+}

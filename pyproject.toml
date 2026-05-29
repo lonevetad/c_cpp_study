@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fcpp-bridge"
+version = "0.1.0"
+description = "Python-to-FCPP-C++ transpilation and IPC bridge"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["src"]
