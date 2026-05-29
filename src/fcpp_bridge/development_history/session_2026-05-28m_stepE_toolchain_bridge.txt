@@ -1,0 +1,151 @@
+SESSION RECORD — 2026-05-28m
+Topic: V1_9_PLAN Step E — AbstractExample toolchain bridge
+Branch: bugfix/fcpp_bridge/it1
+Tests: 665 pass, 0 fail  (was 655; +10 new)
+
+═══════════════════════════════════════════════════════════════════════
+SUMMARY OF WORK
+═══════════════════════════════════════════════════════════════════════
+
+  E.1 — SwarmProcess.latest_snapshot()
+
+    Added to swarm_process.py:
+      _latest_snapshot: Optional[SwarmSnapshot] = None  (in __init__)
+
+      def latest_snapshot(self) -> Optional[SwarmSnapshot]:
+          """Return the snapshot from the most recent update, or None."""
+          return self._latest_snapshot
+
+      def _dispatch_update(self, snapshot: SwarmSnapshot) -> None:
+          self._latest_snapshot = snapshot
+          super()._dispatch_update(snapshot)
+
+    Intercepts every push update before forwarding to the listener
+    pipeline, so latest_snapshot() always reflects the most recent
+    state without requiring a separate pull call.
+
+  E.2 — abstract_example.py: full rewrite
+
+    REMOVED abstract methods:
+      - round_step(round_num, positions, states) → (positions, states)
+      - initial_states(positions) → dict
+
+    ADDED abstract property:
+      - aggregate_class → Type  (the @aggregate_function class)
+
+    ADDED optional properties (with defaults):
+      - build_dir → Path  (examples/.fcpp_build/)
+      - cpp_dir   → Path  (examples/.fcpp_cpp/)
+
+    UPDATED hook signature:
+      - on_round_complete(round_num, snapshot: Optional[SwarmSnapshot])
+        was: on_round_complete(round_num, positions, states)
+
+    REWRITTEN run(num_rounds):
+      1. AggregateValidator.validate(self.aggregate_class)
+      2. Transpiler(self.aggregate_class).generate() → cpp_code
+      3. Compiler(cache_dir=build_dir, cpp_dir=cpp_dir)
+            .get_or_compile(cpp_code, self.log_prefix) → binary
+      4. SwarmProcess(binary_path=binary, num_nodes=len(positions))
+      5. swarm.add_listener(_on_snapshot)  [before start()]
+      6. swarm.start()
+      7. swarm.add_node_explicit(nid, pos)  [for each initial_positions() entry]
+      8. on_simulation_start()
+      9. for round_num in range(num_rounds):
+             swarm.step()
+             on_round_complete(round_num, swarm.latest_snapshot())
+      10. close all open log_files
+      11. swarm.close()
+      12. on_simulation_end()
+
+    _on_snapshot listener:
+      - Opens log file + writes header on new node_id
+      - Appends log_line per active node
+      - Closes log file for nodes absent from snapshot.nodes
+
+  TESTS (+10):
+    tests/examples/test_abstract_example.py (NEW):
+      test_run_validates_aggregate_class
+        AggregateValidator.validate called with aggregate_class
+      test_run_transpiles_aggregate_class
+        Transpiler constructed with aggregate_class; generate() called
+      test_run_compiles_cpp_code
+        Compiler.get_or_compile called with (cpp_code, log_prefix)
+      test_run_starts_swarm_process
+        SwarmProcess.start() called exactly once
+      test_run_adds_nodes_from_initial_positions
+        add_node_explicit called once per position
+      test_run_calls_on_simulation_start
+        on_simulation_start hook fires exactly once
+      test_run_calls_on_simulation_end
+        on_simulation_end hook fires exactly once
+      test_run_step_count_matches_num_rounds
+        step() called num_rounds times
+      test_run_on_round_complete_called_per_round
+        on_round_complete round_nums == [0, 1, 2] for num_rounds=3
+      test_run_closes_swarm_on_completion
+        swarm.close() called after round loop
+
+═══════════════════════════════════════════════════════════════════════
+FILES CHANGED
+═══════════════════════════════════════════════════════════════════════
+
+src/fcpp_bridge/ipc/swarm_process.py
+    __init__: _latest_snapshot = None
+    latest_snapshot() — NEW
+    _dispatch_update() override — stores snapshot before super()
+
+src/fcpp_bridge/examples/abstract_example.py
+    Full rewrite: removed round_step/initial_states; added aggregate_class,
+    build_dir, cpp_dir; rewritten run(); updated on_round_complete signature
+
+src/fcpp_bridge/tests/examples/__init__.py  NEW (empty)
+src/fcpp_bridge/tests/examples/test_abstract_example.py  NEW (+10 tests)
+
+src/fcpp_bridge/development_history/abstract_example_toolchain.md  NEW
+src/fcpp_bridge/development_history/EXAMPLES_JOURNAL.md  +v2.1 section
+src/fcpp_bridge/DSL_GUIDE.md  §10 "Running examples" sub-section added
+src/fcpp_bridge/README.md  Examples section updated (toolchain path)
+src/fcpp_bridge/TUTORIAL_simple.md  "Further examples" note updated
+
+═══════════════════════════════════════════════════════════════════════
+NEXT: SESSION 2026-05-28n — STEP F EXECUTION
+═══════════════════════════════════════════════════════════════════════
+
+Step F: Examples subclasses migration
+
+Files to modify (all 7):
+  src/fcpp_bridge/examples/spreading_collection.py
+  src/fcpp_bridge/examples/chain_decaying.py
+  src/fcpp_bridge/examples/channel_broadcast.py
+  src/fcpp_bridge/examples/collection_compare.py
+  src/fcpp_bridge/examples/message_dispatch.py
+  src/fcpp_bridge/examples/worker_role_assignment.py
+  src/fcpp_bridge/examples/communication_roles_assignment.py
+
+Per-example changes:
+  - Remove round_step() implementation
+  - Remove initial_states() implementation
+  - Remove module-level pure-Python helper functions
+  - Add aggregate_class property
+  - Update on_round_complete(round_num, snapshot: SwarmSnapshot)
+  - Update log_line(round_num, node_id, state_data: Any)
+    (state_data is now dict/JSON from C++ binary, not a Python dataclass)
+
+Special cases:
+  collection_compare.py — source switch at round 12.5 → move into
+    compute() using counter() FCPP primitive
+  message_dispatch.py — message generation rounds 10-50 → move into
+    compute() using counter(); update MessageState struct fields for
+    in-flight exposure in log_line
+  worker_role_assignment.py — on_round_complete reads receiver msgs
+    from snapshot.nodes instead of Python-computed states dict
+  communication_roles_assignment.py — same for comm receiver log
+
+Tests:
+  +7 smoke tests (validate + transpile path, no C++ compiler required)
+  in tests/examples/test_examples_smoke.py (NEW)
+
+Docs:
+  development_history/EXAMPLES_JOURNAL.md — v2.1 per-example entries
+  development_history/session_<date>_stepF_examples_migration.txt

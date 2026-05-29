@@ -17,6 +17,11 @@ from .liveness_strategy import (
 from ._ipc_node_base import _IpcNodeBase
 from .swarm_process import SwarmProcess
 from .physical_node import PhysicalNode
+from .output_channel import OutputChannel
+from .logging_output_channel import LoggingOutputChannel
+from .file_output_channel import FileOutputChannel
+from .callback_output_channel import CallbackOutputChannel
+from .proxy_output_channel import ProxyOutputChannel
 from .device_manager import DeviceManager
 
 __all__ = [
@@ -35,5 +40,10 @@ __all__ = [
     "_IpcNodeBase",
     "SwarmProcess",
     "PhysicalNode",
+    "OutputChannel",
+    "LoggingOutputChannel",
+    "FileOutputChannel",
+    "CallbackOutputChannel",
+    "ProxyOutputChannel",
     "DeviceManager",
 ]

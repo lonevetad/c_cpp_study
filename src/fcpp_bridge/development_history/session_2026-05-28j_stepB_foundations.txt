@@ -1,0 +1,77 @@
+SESSION RECORD — 2026-05-28j
+Topic: V1_9_PLAN Step B — Library foundations
+Branch: bugfix/fcpp_bridge/it1
+Tests: 632 pass, 0 fail  (was 629; +3 new)
+
+═══════════════════════════════════════════════════════════════════════════
+SUMMARY OF WORK
+═══════════════════════════════════════════════════════════════════════════
+
+  B.1 — print() → get_logger() in library code
+    Already done in v1.8 session.  Confirmed: grep for print() in all five
+    library files (compiler_core.py, swarm_process.py, physical_node.py,
+    device_manager.py, runtime_generator.py) returned zero results.
+    No code change needed.
+
+  B.2 — _example_utils.py validation/transpilation helpers
+    Already done in v1.8 and v1.9 sessions.  Confirmed all four helpers
+    present: neighbors_of(), build_positions(), report_validation(),
+    report_transpilation().
+    No code change needed.
+
+  B.3 — PhysicalNode.connect() RAII-style reset
+    Applied pessimistic reset pattern to connect():
+      - self.backend = None and self._connected = False set BEFORE allocation
+      - try/except block wraps backend construction + subscribe_state_updates()
+      - except clause: closes partially-created backend (ignoring secondary
+        exceptions), sets self.backend = None, re-raises original exception
+      - self._connected = True only set after subscribe_state_updates() succeeds
+
+    Added get_state() override in PhysicalNode:
+      - Delegates to super().get_state()
+      - Catches (ConnectionError, OSError): sets self._connected = False, re-raises
+      - Annotated with # type: ignore[override] (return type is same, mypy quirk)
+
+  TESTS (+3):
+    test_connect_raii_backend_raises_leaves_disconnected
+        HttpBackend raises OSError → is_connected=False, backend=None
+    test_connect_raii_subscribe_raises_closes_backend
+        subscribe_state_updates raises ConnectionError → backend.close() called,
+        is_connected=False, backend=None
+    test_get_state_transport_error_marks_disconnected
+        get_state() backend raises OSError → is_connected set to False
+
+═══════════════════════════════════════════════════════════════════════════
+FILES CHANGED
+═══════════════════════════════════════════════════════════════════════════
+
+src/fcpp_bridge/ipc/physical_node.py
+    connect(): RAII-style pessimistic reset + try/except rollback
+    get_state(): new override, sets _connected=False on transport errors
+
+src/fcpp_bridge/tests/ipc/test_physical_node.py
+    +3 tests in "RAII-style connect() — Step B.3" section
+
+═══════════════════════════════════════════════════════════════════════════
+NEXT: SESSION 2026-05-28k — STEP C EXECUTION
+═══════════════════════════════════════════════════════════════════════════
+
+Step C: OutputChannel + DeviceManager integration
+
+Files to create:
+  src/fcpp_bridge/ipc/output_channel.py         — ABC + clone() mixin
+  src/fcpp_bridge/ipc/logging_output_channel.py — LoggingOutputChannel
+  src/fcpp_bridge/ipc/file_output_channel.py    — FileOutputChannel(path_or_stream, format)
+  src/fcpp_bridge/ipc/callback_output_channel.py — CallbackOutputChannel(fn)
+  src/fcpp_bridge/ipc/proxy_output_channel.py   — ProxyOutputChannel(mode)
+
+Files to modify:
+  src/fcpp_bridge/ipc/__init__.py — re-export all five
+  src/fcpp_bridge/ipc/device_manager.py — output_channel= kwarg; route status messages
+
+Tests to write:
+  src/fcpp_bridge/tests/ipc/test_output_channel.py — +15 tests
+
+Docs to update:
+  TUTORIAL_in_depth.md — §"Multi-swarm output channels"
+  README.md — OutputChannel in feature table

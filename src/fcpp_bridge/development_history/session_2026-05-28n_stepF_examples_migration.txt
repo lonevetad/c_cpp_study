@@ -1,0 +1,267 @@
+SESSION RECORD — 2026-05-28n
+Topic: V1_9_PLAN Step F — Examples subclasses migration
+Branch: bugfix/fcpp_bridge/it1
+Tests: 672 pass, 0 fail  (was 665; +7 smoke tests)
+
+═══════════════════════════════════════════════════════════════════════
+SUMMARY OF WORK
+═══════════════════════════════════════════════════════════════════════
+
+  F.0 — Bug fix in spreading_collection.py (carried from session m)
+
+    SpreadingState.calc_distance used math.inf but import math had been
+    removed.  Fixed: replaced math.inf with float('inf').
+
+  F.1 — chain_decaying.py
+
+    REMOVED:
+      - import math  (no longer needed after helper removal)
+      - neighbors_of import
+      - _is_source_node() module-level helper function
+      - _chain_update() module-level helper function
+      - ChainDecayingExample.initial_states()
+      - ChainDecayingExample.round_step()
+      - ChainDecayingExample._final_states attribute
+
+    ADDED:
+      - from typing import Any
+      - aggregate_class property → ChainDecayingAggregate
+      - self._last_snapshot = None in __init__
+      - on_round_complete(round_num, snapshot): self._last_snapshot = snapshot
+      - on_simulation_end: prints stats from _last_snapshot.nodes
+
+    COMPUTE CHANGE:
+      Step 1: is_source = self_state.is_source
+           → is_source = (self_uid() % 17 == 0)  # noqa: F821
+
+    LOG METHODS:
+      log_header(node_id, state_data: Any): simplified header (no is_source)
+      log_line(round_num, node_id, state_data: Any): dict-access body
+
+    MAIN:
+      Removed _final_states block; on_simulation_end handles stats.
+
+  F.2 — channel_broadcast.py
+
+    REMOVED:
+      - neighbors_of import
+      - _bis_distance() module-level helper function
+      - ChannelBroadcastExample.initial_states()
+      - ChannelBroadcastExample.round_step()
+      - ChannelBroadcastExample._final_states attribute
+
+    ADDED:
+      - from typing import Any
+      - aggregate_class property → ChannelBroadcastAggregate
+      - self._last_snapshot = None in __init__
+      - on_round_complete(round_num, snapshot): self._last_snapshot = snapshot
+      - on_simulation_end: prints in_channel_count from _last_snapshot
+
+    COMPUTE CHANGE:
+      Step 2: is_source = self_uid() == 0  (was self_state.is_source)
+      Step 3: is_dest   = self_uid() == 1  (was self_state.is_dest)
+      Step 5: in_channel uses is_source, is_dest local vars (not self_state)
+      Return: is_source/is_dest set from self_uid() == 0/1
+
+    LOG METHODS:
+      log_header(node_id, state_data: Any): same header text
+      log_line(round_num, node_id, state_data: Any): dict-access body
+
+  F.3 — collection_compare.py
+
+    REMOVED:
+      - neighbors_of import
+      - CollectionCompareExample.initial_states()
+      - CollectionCompareExample.round_step()
+      - CollectionCompareExample._final_states attribute
+
+    ADDED:
+      - from typing import Any
+      - aggregate_class property → CollectionCompareAggregate
+      - self._last_snapshot = None in __init__
+      - old() round counter in compute() before abf_distance call
+      - on_round_complete(round_num, snapshot): self._last_snapshot = snapshot
+      - on_simulation_end: prints source stats from _last_snapshot
+
+    COMPUTE CHANGE (step 2 restructured):
+      round_tick = old(0, lambda t: t + 1)  # noqa: F821
+      is_source = (self_uid() == 1 if round_tick >= SOURCE_SWITCH else self_uid() == 0)
+      (was: is_source = self_state.is_source)
+
+    LOG METHODS:
+      log_header(node_id, state_data: Any): same header text
+      log_line(round_num, node_id, state_data: Any): dict-access body
+
+  F.4 — message_dispatch.py
+
+    REMOVED:
+      - neighbors_of import
+      - _bis_distance_msg() module-level helper function
+      - MessageDispatchExample.initial_states()
+      - MessageDispatchExample.round_step()
+      - MessageDispatchExample.on_simulation_start()
+      - MessageDispatchExample._in_flight, _total_received attributes
+      - MessageDispatchExample._rng kept (still needed for initial_positions)
+
+    ADDED:
+      - from typing import Any
+      - MSG_START = 10, MSG_END = 50, MSG_INTERVAL = 10 constants
+      - aggregate_class property → MessageDispatchAggregate
+      - self._last_snapshot = None in __init__
+      - old() round counter in compute() before spawn call
+      - Conditional new_msg injection (every MSG_INTERVAL rounds in window)
+      - on_round_complete(round_num, snapshot): self._last_snapshot = snapshot
+      - on_simulation_end: prints total_received from _last_snapshot
+
+    COMPUTE CHANGE (step 5 restructured):
+      Step 2: is_src = (self_uid() == 0)  (was self_state.is_source)
+      Before step 5:
+        round_tick = old(0, lambda t: t + 1)
+        new_msg = (self_uid(), 0, round_tick)
+                  if 10 <= round_tick <= 50 and tick%10==0 and not is_src
+                  else None
+      spawn() now receives new_msg instead of None
+
+    LOG METHODS:
+      log_header(node_id, state_data: Any): same header text
+      log_line(round_num, node_id, state_data: Any): dict-access body
+        (routing_set: handles both frozenset and int routing_set_size fields)
+
+  F.5 — worker_role_assignment.py
+
+    REMOVED:
+      - neighbors_of import
+      - _bis_distance_worker() module-level helper function
+      - WorkerRoleExample.initial_states()
+      - WorkerRoleExample.round_step()
+      - WorkerRoleExample._roles, _in_flight, _total_delivered,
+        _receiver_ids, _endpoint_ids attributes
+
+    ADDED:
+      - from typing import Any
+      - aggregate_class property → WorkerRoleAggregate
+      - self._last_snapshot = None in __init__
+      - on_round_complete(round_num, snapshot):
+          self._last_snapshot = snapshot
+          writes receiver_messages.log lines for RECEIVER nodes from snapshot
+
+    RECEIVER LOG FORMAT CHANGE:
+      Old: round,receiver_node,sender_node,sender_role,rounds_in_flight,message_body
+      New: round,receiver_node,received_count
+      (C++ IPC snapshot does not expose per-message details)
+
+    on_simulation_start: simplified — only opens receiver_messages.log
+    on_simulation_end:   reads receiver_counts from _last_snapshot.nodes
+
+    LOG METHODS:
+      log_header(node_id, state_data: Any): adds role column to header
+        ("# round,role,dist_to_receiver,routing_set_size,received_count,active_procs")
+      log_line(round_num, node_id, state_data: Any): dict-access body
+
+    NOTE: C++ binary starts all nodes as UNASSIGNED (role=0); Python-side
+    ROLE_CYCLE assignment is not sent to the binary in this release.
+
+  F.6 — communication_roles_assignment.py
+
+    REMOVED:
+      - _bis_dist_comm() module-level helper function
+      - CommunicationRolesExample.initial_states()
+      - CommunicationRolesExample.round_step()
+      - CommunicationRolesExample._dist_to_receiver, _dist_from_sender,
+        _round_ticks, _current_msgs, _received_logs, _total_received attributes
+        (all replaced by snapshot-based reporting)
+
+    KEPT:
+      - CommunicationRolesExample.__init__ runs _setup_network() (positions)
+      - _initial_positions, _sink_positions, _source_positions,
+        _initial_states_cache (used by main() for role distribution display)
+      - neighbors_of import (still used by setup helpers)
+      - All _setup_network / _count_isolated / _build_and_migrate_network /
+        _place_points / _assign_initial_roles helpers (unchanged)
+
+    ADDED:
+      - from typing import Any (added to imports)
+      - aggregate_class property → CommunicationRolesAggregate
+      - self._last_snapshot = None, self._recv_log = None in __init__
+      - on_round_complete(round_num, snapshot):
+          self._last_snapshot = snapshot
+          writes comm_receiver_messages.log for RECEIVER nodes from snapshot
+
+    RECEIVER LOG FORMAT CHANGE:
+      Old: round,receiver_nid,sender_nid,tick,msg_payload
+      New: round,receiver_nid,received_log_size
+
+    on_simulation_start: simplified — only opens comm_receiver_messages.log
+    on_simulation_end: reads receiver_sizes from _last_snapshot.nodes
+
+    LOG METHODS:
+      log_header(node_id, state_data: Any): adds role name in header
+      log_line(round_num, node_id, state_data: Any): dict-access body
+
+    NOTE: C++ binary starts all nodes as UNASSIGNED; _setup_network() role
+    assignment is not sent to the binary in this release.
+
+  F.7 — Smoke tests
+
+    NEW FILE: tests/examples/test_examples_smoke.py
+      7 tests — one per aggregate class:
+        test_spreading_collection_smoke
+        test_chain_decaying_smoke
+        test_channel_broadcast_smoke
+        test_collection_compare_smoke
+        test_message_dispatch_smoke
+        test_worker_role_smoke
+        test_communication_roles_smoke
+      Each test: AggregateValidator.validate(cls) + Transpiler(cls).generate()
+      No C++ compiler required.  All 7 pass.
+
+═══════════════════════════════════════════════════════════════════════
+FILES CHANGED
+═══════════════════════════════════════════════════════════════════════
+
+src/fcpp_bridge/examples/spreading_collection.py
+    SpreadingState.calc_distance: math.inf → float('inf')
+
+src/fcpp_bridge/examples/chain_decaying.py
+    Full class replacement: removed helpers + old methods, added toolchain path
+
+src/fcpp_bridge/examples/channel_broadcast.py
+    Full class replacement: removed helpers + old methods, added toolchain path
+
+src/fcpp_bridge/examples/collection_compare.py
+    Full class replacement: added old() counter, removed helpers + old methods
+
+src/fcpp_bridge/examples/message_dispatch.py
+    Full class replacement: added old() counter + new_msg injection, removed helpers
+
+src/fcpp_bridge/examples/worker_role_assignment.py
+    Full class replacement: receiver log from snapshot, removed helpers + old methods
+
+src/fcpp_bridge/examples/communication_roles_assignment.py
+    Full class replacement: receiver log from snapshot, removed round_step/initial_states
+
+src/fcpp_bridge/tests/examples/test_examples_smoke.py  NEW (+7 tests)
+
+src/fcpp_bridge/development_history/EXAMPLES_JOURNAL.md  +v2.2 section
+src/fcpp_bridge/development_history/session_2026-05-28n_stepF_examples_migration.txt  NEW
+
+═══════════════════════════════════════════════════════════════════════
+TEST COUNTS
+═══════════════════════════════════════════════════════════════════════
+
+  Before: 665 tests — 665 pass, 0 fail
+  After:  672 tests — 672 pass, 0 fail  (+7 smoke tests)
+
+═══════════════════════════════════════════════════════════════════════
+V1_9_PLAN STATUS
+═══════════════════════════════════════════════════════════════════════
+
+  Step A — ✅ DONE (session 2026-05-28a–e)
+  Step B — ✅ DONE (session 2026-05-28f–g)
+  Step C — ✅ DONE (session 2026-05-28h–j)
+  Step D — ✅ DONE (session 2026-05-28k–l)
+  Step E — ✅ DONE (session 2026-05-28m)
+  Step F — ✅ DONE (this session: 2026-05-28n)
+
+  ALL 6 STEPS OF V1_9_PLAN COMPLETE.
+

@@ -233,3 +233,32 @@ def test_check_liveness_uses_active_strategy():
     swarm._liveness_strategy.on_snapshot(_snap(42))
     result = swarm.check_liveness()
     assert result[42] is True
+
+
+# ── Step D — Ping handler + pong round-trip ───────────────────────────────────
+
+
+def test_active_ping_bad_response_returns_false():
+    """Backend returns a non-pong response → node is reported dead."""
+    mock_backend = MagicMock()
+    mock_backend.send_command.return_value = {"status": "error"}
+    strat = ActivePingStrategy(lambda: mock_backend)
+    strat.on_snapshot(_snap(7))
+    result = strat.check()
+    assert result[7] is False
+
+
+def test_ping_handler_present_in_cpp_template():
+    """main_template_header() must contain the standard ping/pong handler."""
+    from fcpp_bridge.runtime.runtime_generator import RuntimeGenerator
+    template = RuntimeGenerator.main_template_header()
+    assert '"ping"' in template
+    assert '"pong"' in template
+    assert "register_handler" in template
+
+
+def test_active_ping_docstring_no_longer_requires_binary():
+    """ActivePingStrategy docstring must not say 'Requires' the C++ binary handler."""
+    doc = ActivePingStrategy.__doc__ or ""
+    assert "registered automatically" in doc
+    assert "Requires" not in doc

@@ -47,9 +47,20 @@ Note on role stability:
     because sink/source points are fixed.  The match/case therefore acts as a
     permanent routing configuration, not a dynamic election.
 
+Note on role assignment in toolchain mode:
+    The C++ binary uses initial_state() → CommRoleState() (UNASSIGNED) for all
+    nodes, since _setup_network() role assignment cannot be passed to the binary
+    via the current IPC interface.  Role-specific behaviour will only execute
+    correctly once role injection is added to the IPC protocol.
+
+Running:
+    CommunicationRolesExample().run(NUM_ROUNDS) invokes the full toolchain:
+    validate → transpile → compile → SwarmProcess → per-node logs.
+    A C++ compiler and FCPP headers are required.
+
 Log files written to examples/logs/:
     node_<id>_comm_roles.log   — per-node per-round stats
-    comm_receiver_messages.log — messages delivered to any RECEIVER node
+    comm_receiver_messages.log — RECEIVER node received_log_size per round
 """
 
 import logging
@@ -57,7 +68,7 @@ import math
 import random
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fcpp_bridge.python_dsl import aggregate_function, Neighborhood
 from fcpp_bridge.examples._example_utils import (
@@ -501,25 +512,19 @@ def _setup_network(
 
 
 # ---------------------------------------------------------------------------
-# Demo simulation — AbstractExample subclass
+# AbstractExample subclass — toolchain bridge
 # ---------------------------------------------------------------------------
 
-def _bis_dist_comm(nid: int, is_source: bool, nbr_dists: List[float]) -> float:
-    if is_source:
-        return 0.0
-    finite = [d for d in nbr_dists if math.isfinite(d)]
-    return min(finite) + COMM * 0.1 if finite else math.inf
-
-
 class CommunicationRolesExample(AbstractExample):
-    """Pure-Python faithful implementation of communication_roles_assignment.
+    """Runs CommunicationRolesAggregate through the full toolchain.
 
-    The constructor runs _setup_network() to determine fixed positions and
-    initial roles.  The simulation loop (run()) is handled by AbstractExample;
-    this class provides the round logic and extra receiver-message logging.
+    The constructor runs _setup_network() to determine initial positions.
+    Validates, transpiles, compiles (SHA-256 cached), and runs the C++ binary.
+    State updates arrive via IPC; per-node log files are written from snapshots.
 
     An extra per-simulation log (comm_receiver_messages.log) is opened in
-    on_simulation_start() and closed in on_simulation_end().
+    on_simulation_start() and closed in on_simulation_end(). Its content
+    (RECEIVER node received_log_size per round) is written in on_round_complete().
     """
 
     def __init__(self, seed: int = 42):
@@ -529,23 +534,12 @@ class CommunicationRolesExample(AbstractExample):
         self._source_positions = source_pos
         self._initial_states_cache = init_states
 
-        self._receiver_nids: frozenset = frozenset(
-            nid for nid, s in init_states.items()
-            if s.role == CommunicationRole.RECEIVER.value
-        )
-        self._sender_nids: frozenset = frozenset(
-            nid for nid, s in init_states.items()
-            if s.role == CommunicationRole.SENDER.value
-        )
-
-        # Per-simulation state (reset in on_simulation_start)
-        self._dist_to_receiver: dict = {}
-        self._dist_from_sender: dict = {}
-        self._round_ticks: dict = {}
-        self._current_msgs: dict = {}
-        self._received_logs: dict = {}
-        self._total_received: dict = {}
         self._recv_log = None
+        self._last_snapshot = None
+
+    @property
+    def aggregate_class(self):
+        return CommunicationRolesAggregate
 
     @property
     def log_prefix(self) -> str:
@@ -554,137 +548,62 @@ class CommunicationRolesExample(AbstractExample):
     def initial_positions(self) -> dict:
         return dict(self._initial_positions)
 
-    def initial_states(self, positions: dict) -> dict:
-        return dict(self._initial_states_cache)
-
     def on_simulation_start(self) -> None:
-        nids = set(self._initial_positions.keys())
-        self._dist_to_receiver = {nid: math.inf for nid in nids}
-        self._dist_from_sender = {nid: math.inf for nid in nids}
-        self._round_ticks      = {nid: 0        for nid in nids}
-        self._current_msgs     = {nid: None      for nid in nids}
-        self._received_logs    = {nid: {}        for nid in nids}
-        self._total_received   = {nid: 0         for nid in nids}
-
         recv_log_path = self.log_dir / "comm_receiver_messages.log"
         self._recv_log = open(recv_log_path, "w")  # noqa: SIM115
         self._recv_log.write(
-            "# Communication Roles Assignment — receiver message log\n"
-            "# round,receiver_nid,sender_nid,tick,msg_payload\n"
+            "# Communication Roles Assignment — receiver message log (toolchain)\n"
+            "# round,receiver_nid,received_log_size\n"
         )
 
-    def round_step(self, round_num: int, positions: dict, states: dict) -> tuple:
-        new_states = {}
-
-        # ── Step 1: BIS distance toward Receivers ─────────────────────────────
-        new_d_recv = {}
-        for nid in positions:
-            nbrs = neighbors_of(positions, nid, COMM)
-            nbr_dists = [self._dist_to_receiver[n] for n in nbrs
-                         if n in self._dist_to_receiver]
-            new_d_recv[nid] = _bis_dist_comm(
-                nid, nid in self._receiver_nids, nbr_dists)
-        self._dist_to_receiver.update(new_d_recv)
-
-        # ── Step 2: BIS distance from Senders ─────────────────────────────────
-        new_d_send = {}
-        for nid in positions:
-            nbrs = neighbors_of(positions, nid, COMM)
-            nbr_dists = [self._dist_from_sender[n] for n in nbrs
-                         if n in self._dist_from_sender]
-            new_d_send[nid] = _bis_dist_comm(
-                nid, nid in self._sender_nids, nbr_dists)
-        self._dist_from_sender.update(new_d_send)
-
-        # ── Step 3: Election (roles are stable; confirmed by _setup_network) ──
-
-        # ── Step 4: Round counter ──────────────────────────────────────────────
-        for nid in positions:
-            self._round_ticks[nid] = self._round_ticks.get(nid, 0) + 1
-
-        # ── Step 5: Senders inject messages every MSG_TICKS_INTERVAL rounds ───
-        for nid in self._sender_nids:
-            if nid not in positions:
-                continue
-            if self._round_ticks[nid] % MSG_TICKS_INTERVAL == 0:
-                self._current_msgs[nid] = (
-                    nid,
-                    self._round_ticks[nid],
-                    states[nid].dist_to_nearest_source,
-                )
-
-        # Broadcast messages outward (each node adopts nearest Sender's message)
-        new_msgs: dict = {nid: None for nid in positions}
-        for nid in positions:
-            best_sender = None
-            best_dist = math.inf
-            for snid in self._sender_nids:
-                if snid not in positions:
-                    continue
-                d = self._dist_from_sender.get(nid, math.inf)
-                if math.isfinite(d) and d < best_dist and self._current_msgs.get(snid) is not None:
-                    best_dist = d
-                    best_sender = snid
-            new_msgs[nid] = self._current_msgs[best_sender] if best_sender is not None else None
-        for snid in self._sender_nids:
-            if snid in positions and self._current_msgs.get(snid) is not None:
-                new_msgs[snid] = self._current_msgs[snid]
-
-        # ── Step 6: Receivers accumulate received messages ─────────────────────
-        for nid in self._receiver_nids:
-            if nid not in positions:
-                continue
-            msg = new_msgs.get(nid)
-            if msg is not None:
-                key = (msg[0], msg[1])
-                if key not in self._received_logs[nid]:
-                    self._received_logs[nid][key] = msg
-                    self._total_received[nid] += 1
-                    self._recv_log.write(
-                        f"{round_num},{nid},{msg[0]},{msg[1]},{msg}\n"
-                    )
-
-        # ── Build new states ───────────────────────────────────────────────────
-        for nid in positions:
-            role = states[nid].role
-            new_states[nid] = CommRoleState(
-                role=role,
-                dist_to_nearest_sink=states[nid].dist_to_nearest_sink,
-                dist_to_nearest_source=states[nid].dist_to_nearest_source,
-                dist_to_receiver=new_d_recv[nid],
-                dist_from_sender=new_d_send[nid],
-                round_tick=self._round_ticks[nid],
-                msg_payload=new_msgs.get(nid),
-                received_log_size=len(self._received_logs[nid]),
-            )
-
-        return positions, new_states  # positions are static (no movement)
-
-    def log_header(self, node_id: int, state) -> str:
-        role_name = CommunicationRole(state.role).name
+    def log_header(self, node_id: int, state_data: Any) -> str:
+        d = state_data if isinstance(state_data, dict) else vars(state_data)
+        try:
+            role_name = CommunicationRole(d.get('role', 0)).name
+        except (ValueError, KeyError):
+            role_name = "UNKNOWN"
         return (
             f"# CommRoles — node {node_id} ({role_name})\n"
             "# round,role,dist_to_receiver,dist_from_sender,received_log_size\n"
         )
 
-    def log_line(self, round_num: int, node_id: int, state) -> str:
+    def log_line(self, round_num: int, node_id: int, state_data: Any) -> str:
+        d = state_data if isinstance(state_data, dict) else vars(state_data)
         return (
-            f"{round_num},{state.role},"
-            f"{state.dist_to_receiver:.4f},"
-            f"{state.dist_from_sender:.4f},"
-            f"{state.received_log_size}\n"
+            f"{round_num},{d.get('role', 0)},"
+            f"{d.get('dist_to_receiver', 0.0):.4f},"
+            f"{d.get('dist_from_sender', 0.0):.4f},"
+            f"{d.get('received_log_size', 0)}\n"
         )
+
+    def on_round_complete(self, round_num: int, snapshot) -> None:
+        self._last_snapshot = snapshot
+        if snapshot is None or self._recv_log is None:
+            return
+        for ns in snapshot.nodes:
+            d = ns.state_data if isinstance(ns.state_data, dict) else vars(ns.state_data)
+            if d.get('role') == CommunicationRole.RECEIVER.value:
+                self._recv_log.write(
+                    f"{round_num},{ns.node_id},{d.get('received_log_size', 0)}\n"
+                )
 
     def on_simulation_end(self) -> None:
         if self._recv_log:
             self._recv_log.close()
             self._recv_log = None
+        snap = self._last_snapshot
         n = len(self._initial_positions)
-        total_msgs = sum(self._total_received.values())
+        receiver_sizes = {}
+        if snap and snap.nodes:
+            for ns in snap.nodes:
+                d = ns.state_data if isinstance(ns.state_data, dict) else vars(ns.state_data)
+                if d.get('role') == CommunicationRole.RECEIVER.value:
+                    receiver_sizes[ns.node_id] = d.get('received_log_size', 0)
+        total_msgs = sum(receiver_sizes.values())
         print(f"    Wrote {n} node logs + comm_receiver_messages.log → {self.log_dir}/")
         print(f"    Total distinct messages received across all Receivers: {total_msgs}")
-        for rnid in sorted(self._receiver_nids):
-            print(f"    RECEIVER node {rnid:2d}: {self._total_received[rnid]} messages")
+        for rnid in sorted(receiver_sizes):
+            print(f"    RECEIVER node {rnid:2d}: {receiver_sizes[rnid]} messages")
 
 
 # ---------------------------------------------------------------------------

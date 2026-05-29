@@ -166,10 +166,9 @@ fcpp_bridge/
 The `examples/` directory contains Python ports of real FCPP C++ algorithms from
 `fcpp-sample-project` and `fcpp-exercises`, plus original DSL-showcase examples, written
 for demonstration and learning.  Each file defines an `@aggregate_function` class
-(transpilable to C++) and a pure-Python `_demo_simulate()` that runs the algorithm and
-writes per-node log files to `examples/logs/`.
+(the algorithm) and an `AbstractExample` subclass that runs it through the full toolchain.
 
-Run any example:
+Run any example (requires C++ compiler + FCPP headers):
 
 ```bash
 cd <repo-root>
@@ -191,7 +190,9 @@ PYTHONPATH=src python src/fcpp_bridge/examples/end_to_end.py --steps run --nodes
 
 See `TUTORIAL_simple.md §Running individual steps` for the full flag reference.
 
-All 7 main examples subclass `AbstractExample` (v2.0) — `_demo_simulate()` is replaced by a class that implements `initial_positions`, `initial_states`, `round_step`, `log_header`, `log_line`.  Nodes are managed as `dict[int, state]` so nodes can join or leave dynamically during simulation.
+All 7 main examples subclass `AbstractExample` (v1.9) — calling `example.run(num_rounds)`
+validates, transpiles, compiles, and runs the `@aggregate_function` class through the C++
+binary, collecting `SwarmSnapshot` updates via IPC and writing per-node log files.
 
 | Python file               | C++ source / origin                                | Key FCPP primitives                                                                                |
 | ------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
@@ -234,7 +235,8 @@ and resume instructions.
 - ✅ `RuntimeGenerator` (C++ headers: ipc_server, state_serializer, node_manager, main_template)
 - ✅ `UnixSocketBackend`, `HttpBackend`, `GrpcBackend` (full gRPC streaming with `.proto`)
 - ✅ `SwarmProcess` (subprocess lifecycle, step, get_state, add_nodes)
-- ✅ `DeviceManager` (multi-swarm lifecycle, send_all, step_all, get_all_states, context manager)
+- ✅ `DeviceManager` (multi-swarm lifecycle, send_all, step_all, get_all_states, context manager; `output_channel=` kwarg for fleet-wide event fan-out)
+- ✅ `OutputChannel` ABC + `LoggingOutputChannel`, `FileOutputChannel`, `CallbackOutputChannel`, `ProxyOutputChannel` (Prototype pattern; `ProxyOutputChannel` supports sequential/parallel fan-out)
 - ✅ `AggregateLanguageParser` (tokenizer + recursive-descent parser, `parse_string`/`parse_file`; all 64 FCPP primitives with variable-arg parsing)
 - ✅ `AntlrParser` (antlr4-backed parser with fallback; `AggregateProgram.g4` grammar file with all 64 primitives)
 - ✅ `ast_to_dsl` converter

@@ -591,14 +591,19 @@ logging / metrics / UI
 
 ## Further examples
 
-The `examples/` directory contains ready-to-run programs with pure-Python simulations.
-No C++ toolchain is required to run them.
+The `examples/` directory contains ready-to-run programs that invoke the **full
+toolchain** — validate → transpile → compile → run C++ binary.  A C++ compiler and
+FCPP headers are required.  Each example is an `AbstractExample` subclass; calling
+`example.run(num_rounds)` handles the entire pipeline automatically.
 
 | File | What it shows |
 | ---- | ------------- |
-| `message_dispatch.py` | `spawn` + `sp_collection` point-to-point message routing |
 | `channel_broadcast.py` | `bis_distance` elliptical channel selection |
 | `collection_compare.py` | SP / MP / WMP collection algorithms side-by-side |
+| `message_dispatch.py` | `spawn` + `sp_collection` point-to-point message routing |
+| `spreading_collection.py` | `abf_distance`, `mp_collection`, `broadcast` — gradient spreading + collection (port of `spreading_collection.hpp`) |
+| `chain_decaying.py` | TTL-based decaying chain; `nbr` + `min_hood` + `self_uid()`; per-node `(should_hold, hops, ttl, next_uid)` state; nodes decay out when TTL ≥ threshold |
+| `communication_roles_assignment.py` | **`bis_distance` ×2** + `old` + `broadcast` + **`match/case`** + `self_uid()`; 4 roles (SENDER / REPEATER / RECEIVER / UNASSIGNED) negotiated by proximity to source/sink points |
 | `worker_role_assignment.py` | **`match/case` → C++ `switch`** for 8-role swarm dispatch + periodic `spawn` reports + `self_uid()` + `RoleCommunicationType` |
 
 `worker_role_assignment.py` is a good next step after this tutorial: it uses the same

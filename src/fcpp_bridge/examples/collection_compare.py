@@ -22,20 +22,27 @@ Log files:
     Each line: round, is_source, distance, spc_sum, mpc_sum, wmpc_sum,
                                            spc_max, mpc_max, wmpc_max
 
+Running:
+    CollectionCompareExample().run(NUM_ROUNDS) invokes the full toolchain:
+    validate → transpile → compile → SwarmProcess → per-node logs.
+    A C++ compiler and FCPP headers are required.
+
 Differences from original C++:
     - Distance algorithm: C++ selects via a node-storage `algorithm` tag (0/1/2).
       This port always uses abf_distance (algorithm=0) for clarity.
     - ideal_sum / ideal_max fields from the C++ are not included in the state
       (they are ground-truth values computed per-node without any collection).
+    - Source switch: C++ uses node.current_time() >= SOURCE_SWITCH (250);
+      this port uses an old() round counter with the same threshold.
 """
 
 import math
 import random
 from dataclasses import dataclass
+from typing import Any
 
 from fcpp_bridge.python_dsl import aggregate_function, Neighborhood
 from fcpp_bridge.examples._example_utils import (
-    neighbors_of,
     report_validation,
     report_transpilation,
 )
@@ -101,6 +108,7 @@ class CollectionCompareAggregate:
 
     Primitive → C++ mapping:
         rectangle_walk(...)    → rectangle_walk(CALL, ...)   [geometry.hpp]
+        old(...)               → old(CALL, ...)              [basics.hpp]
         abf_distance(...)      → abf_distance(CALL, ...)     [spreading.hpp]
         sp_collection(...)     → sp_collection(CALL, ...)    [collection.hpp]
         mp_collection(...)     → mp_collection(CALL, ...)    [collection.hpp]
@@ -119,7 +127,7 @@ class CollectionCompareAggregate:
         """
         Replicates C++ MAIN() from collection_compare.hpp in order:
           1. rectangle_walk
-          2. generic_distance  → abf_distance (algorithm 0)
+          2. old() round counter + source selection + abf_distance
           3. device_counting   → sp / mp / wmp collection of 1.0 per node
           4. progress_tracking → sp / mp / wmp collection of per-node value
         """
@@ -132,10 +140,14 @@ class CollectionCompareAggregate:
             1,
         )
 
-        # ── Step 2: generic_distance (algorithm 0 = abf_distance) ────────────
-        # C++: double dist = generic_distance(CALL, dist_algo, is_source);
-        #      generic_distance: if (algorithm == 0) return abf_distance(CALL, source);
-        is_source = self_state.is_source
+        # ── Step 2: round counter + source selection + generic_distance ────────
+        # Round counter: old(0, t+1) gives the current simulation tick.
+        # Source switches from node 0 to node 1 when tick >= SOURCE_SWITCH.
+        # C++: is_source = (node.uid == 0 or node.uid == 1) AND time-based switch
+        round_tick = old(0, lambda t: t + 1)  # noqa: F821
+        is_source = (  # noqa: F821
+            self_uid() == 1 if round_tick >= SOURCE_SWITCH else self_uid() == 0  # noqa: F821
+        )
         dist = abf_distance(is_source)  # noqa: F821
 
         # ── Step 3: device_counting ───────────────────────────────────────────
@@ -209,22 +221,23 @@ class CollectionCompareAggregate:
 
 
 # ---------------------------------------------------------------------------
-# Demo simulation — AbstractExample subclass
+# AbstractExample subclass — toolchain bridge
 # ---------------------------------------------------------------------------
 
 class CollectionCompareExample(AbstractExample):
-    """Pure-Python faithful implementation of collection_compare.hpp.
+    """Runs CollectionCompareAggregate through the full toolchain.
 
-    Runs both case studies (device_counting and progress_tracking) and writes
-    per-node log files.
-
-    Nodes are stored as dict[int, CollectionCompareState]; the initial set is
-    range(NUM_NODES) but nodes may join or leave between rounds.
+    Validates, transpiles, compiles (SHA-256 cached), and runs the C++ binary.
+    State updates arrive via IPC; per-node log files are written from snapshots.
     """
 
     def __init__(self, seed: int = 11):
         self._rng = random.Random(seed)
-        self._final_states: dict = {}
+        self._last_snapshot = None
+
+    @property
+    def aggregate_class(self):
+        return CollectionCompareAggregate
 
     @property
     def log_prefix(self) -> str:
@@ -236,101 +249,40 @@ class CollectionCompareExample(AbstractExample):
             for i in range(NUM_NODES)
         }
 
-    def initial_states(self, positions: dict) -> dict:
-        return {
-            i: CollectionCompareState(is_source=(i == 0))
-            for i in positions
-        }
-
-    def round_step(self, round_num: int, positions: dict, states: dict) -> tuple:
-        new_positions = {}
-        new_states = {}
-
-        # Switch source halfway through (mirrors original C++ SOURCE_SWITCH logic)
-        source_id = 1 if round_num >= (NUM_ROUNDS // 2) else 0
-
-        for nid, (x, y) in positions.items():
-            new_positions[nid] = (
-                max(0.0, min(AREA_W, x + self._rng.uniform(-SPEED, SPEED))),
-                max(0.0, min(AREA_H, y + self._rng.uniform(-SPEED, SPEED))),
-            )
-
-        for nid in positions:
-            nbrs = neighbors_of(positions, nid, COMM)
-            nbr_s = [states[n] for n in nbrs]
-
-            # Step 2: abf_distance
-            is_source = (nid == source_id)
-            if is_source:
-                dist = 0.0
-            elif nbr_s:
-                dist = min(ns.distance for ns in nbr_s) + COMM * 0.05
-            else:
-                dist = math.inf
-
-            # Step 3: device_counting — SP/MP/WMP collection (sum of 1.0 per node)
-            if is_source:
-                children = [ns for ns in nbr_s if math.isfinite(ns.distance)]
-                spc_sum = 1.0 + sum(ns.spc_sum for ns in children if ns.distance > dist)
-                mpc_sum = 1.0 + sum(ns.mpc_sum for ns in children if ns.distance > dist)
-                wmpc_sum = 1.0 + sum(ns.wmpc_sum for ns in children if ns.distance > dist)
-            else:
-                spc_sum = mpc_sum = wmpc_sum = 0.0
-
-            # Step 4: progress_tracking — max of per-node value
-            value = dist
-            if is_source:
-                children = [ns for ns in nbr_s if math.isfinite(ns.distance)]
-                spc_max = max(
-                    (value, *(ns.spc_max for ns in children if ns.distance > dist)),
-                    default=value
-                )
-                mpc_max = max(
-                    (value, *(ns.mpc_max for ns in children if ns.distance > dist)),
-                    default=value
-                )
-                wmpc_max = max(
-                    (value, *(ns.wmpc_max for ns in children if ns.distance > dist)),
-                    default=value
-                )
-            else:
-                spc_max = mpc_max = wmpc_max = 0.0
-
-            new_states[nid] = CollectionCompareState(
-                is_source=is_source,
-                distance=dist,
-                spc_sum=spc_sum, mpc_sum=mpc_sum, wmpc_sum=wmpc_sum,
-                spc_max=spc_max, mpc_max=mpc_max, wmpc_max=wmpc_max,
-            )
-
-        return new_positions, new_states
-
-    def log_header(self, node_id: int, state) -> str:
+    def log_header(self, node_id: int, state_data: Any) -> str:
         return (
             f"# CollectionCompare — node {node_id}\n"
             "# round,is_source,distance,"
             "spc_sum,mpc_sum,wmpc_sum,spc_max,mpc_max,wmpc_max\n"
         )
 
-    def log_line(self, round_num: int, node_id: int, state) -> str:
+    def log_line(self, round_num: int, node_id: int, state_data: Any) -> str:
+        d = state_data if isinstance(state_data, dict) else vars(state_data)
         return (
-            f"{round_num},{int(state.is_source)},{state.distance:.4f},"
-            f"{state.spc_sum:.4f},{state.mpc_sum:.4f},{state.wmpc_sum:.4f},"
-            f"{state.spc_max:.4f},{state.mpc_max:.4f},{state.wmpc_max:.4f}\n"
+            f"{round_num},{int(d.get('is_source', False))},{d.get('distance', 0.0):.4f},"
+            f"{d.get('spc_sum', 0.0):.4f},{d.get('mpc_sum', 0.0):.4f},"
+            f"{d.get('wmpc_sum', 0.0):.4f},"
+            f"{d.get('spc_max', 0.0):.4f},{d.get('mpc_max', 0.0):.4f},"
+            f"{d.get('wmpc_max', 0.0):.4f}\n"
         )
 
-    def on_round_complete(self, round_num: int, positions: dict, states: dict) -> None:
-        self._final_states = states
+    def on_round_complete(self, round_num: int, snapshot) -> None:
+        self._last_snapshot = snapshot
 
     def on_simulation_end(self) -> None:
-        states = self._final_states
-        src_id = 1 if NUM_ROUNDS >= (NUM_ROUNDS // 2) else 0
-        src_state = states[src_id]
         print(f"    Wrote {NUM_NODES} log files → {self.log_dir}/")
-        print(f"    Final at source (node {src_id}): "
-              f"spc_sum={src_state.spc_sum:.1f}, "
-              f"mpc_sum={src_state.mpc_sum:.1f}, "
-              f"wmpc_sum={src_state.wmpc_sum:.1f}")
+        snap = self._last_snapshot
+        if snap and snap.nodes:
+            for ns in snap.nodes:
+                d = ns.state_data if isinstance(ns.state_data, dict) else vars(ns.state_data)
+                if d.get('is_source', False):
+                    print(
+                        f"    Final at source (node {ns.node_id}): "
+                        f"spc_sum={d.get('spc_sum', 0.0):.1f}, "
+                        f"mpc_sum={d.get('mpc_sum', 0.0):.1f}, "
+                        f"wmpc_sum={d.get('wmpc_sum', 0.0):.1f}"
+                    )
+                    break
 
 
 # ---------------------------------------------------------------------------
@@ -368,9 +320,9 @@ def main() -> None:
     print()
     print("Primitives used:")
     print("  geometry.hpp  : rectangle_walk")
+    print("  basics.hpp    : old, count_hood")
     print("  spreading.hpp : abf_distance")
     print("  collection.hpp: sp_collection, mp_collection, wmp_collection")
-    print("  basics.hpp    : count_hood")
     print()
 
 

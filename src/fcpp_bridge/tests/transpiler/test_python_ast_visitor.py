@@ -914,3 +914,36 @@ def test_match_or_pattern_with_enum_folding():
     assert "case 0:" in result
     assert "case 1:" in result
     assert "_TestRole" not in result
+
+
+# ── Step A — Transpiler completeness (frozenset, min_hood tuple, broadcast) ──
+
+
+def test_frozenset_with_element():
+    """frozenset({self_uid()}) → set_t{node.uid}"""
+    result = _v("frozenset({self_uid()})")
+    assert result == "set_t{node.uid}"
+
+
+def test_frozenset_empty():
+    """frozenset() → set_t{}"""
+    result = _v("frozenset()")
+    assert result == "set_t{}"
+
+
+def test_min_hood_tuple_to_make_tuple():
+    """min_hood((x, y)) → min_hood(CALL, std::make_tuple(x, y))"""
+    result = _v("min_hood((x, y))")
+    assert result == "min_hood(CALL, std::make_tuple(x, y))"
+
+
+def test_max_hood_tuple_to_make_tuple():
+    """max_hood((a, b, c)) → max_hood(CALL, std::make_tuple(a, b, c))"""
+    result = _v("max_hood((a, b, c))")
+    assert result == "max_hood(CALL, std::make_tuple(a, b, c))"
+
+
+def test_broadcast_with_self_uid():
+    """broadcast(is_receiver, self_uid()) → broadcast(CALL, is_receiver, node.uid)"""
+    result = _v("broadcast(is_receiver, self_uid())")
+    assert result == "broadcast(CALL, is_receiver, node.uid)"

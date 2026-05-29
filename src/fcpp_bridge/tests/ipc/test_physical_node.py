@@ -271,3 +271,42 @@ def test_physical_node_stop_auto_reconnect_clears_thread():
     assert node._reconnect_thread is not None
     node.stop_auto_reconnect()
     assert node._reconnect_thread is None
+
+
+# ============================================================================
+# 11. RAII-style connect() — Step B.3
+# ============================================================================
+
+def test_connect_raii_backend_raises_leaves_disconnected():
+    """If backend constructor raises, is_connected stays False and backend is None."""
+    node = PhysicalNode("localhost", 9000, backend_type="http")
+    with patch("fcpp_bridge.ipc.physical_node.HttpBackend", side_effect=OSError("refused")):
+        with pytest.raises(OSError):
+            node.connect()
+    assert not node.is_connected
+    assert node.backend is None
+
+
+def test_connect_raii_subscribe_raises_closes_backend():
+    """If subscribe_state_updates raises, the backend is closed and is_connected stays False."""
+    node = PhysicalNode("localhost", 9000, backend_type="http")
+    mock_backend = MagicMock()
+    mock_backend.subscribe_state_updates.side_effect = ConnectionError("no route")
+    with patch("fcpp_bridge.ipc.physical_node.HttpBackend", return_value=mock_backend):
+        with pytest.raises(ConnectionError):
+            node.connect()
+    mock_backend.close.assert_called()
+    assert not node.is_connected
+    assert node.backend is None
+
+
+def test_get_state_transport_error_marks_disconnected():
+    """get_state() catching OSError/ConnectionError sets is_connected=False."""
+    node = PhysicalNode("localhost", 9000)
+    mock_backend = MagicMock()
+    mock_backend.get_state.side_effect = OSError("link down")
+    node.backend = mock_backend
+    node._connected = True
+    with pytest.raises(OSError):
+        node.get_state()
+    assert not node.is_connected

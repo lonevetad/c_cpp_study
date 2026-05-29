@@ -83,9 +83,9 @@ in their state.  Repeater roles (0, 4) do not inject sensor data.
 
 ---
 
-## Algorithm (7 steps, all nodes, every round)
+## Algorithm (8 steps, all nodes, every round)
 
-All seven steps run at **every** node because FCPP aligns aggregate-primitive
+All eight steps run at **every** node because FCPP aligns aggregate-primitive
 calls via an internal `CALL` counter.  Skipping a primitive on a subset of nodes
 would desynchronise the counter and produce incorrect C++ behavior.
 
@@ -95,9 +95,10 @@ would desynchronise the counter and produce incorrect C++ behavior.
 | 2 | `nbr(dist)` + `min_hood((nbr_dists, self_uid()))` | Spanning-tree parent; `self_uid()` as tie-breaker |
 | 3 | `count_hood()` | Local neighbor count (coverage metric) |
 | 4 | `sp_collection(dist, {self_uid()}, {}, union)` | Routing subtree per node |
-| 5 | `spawn(lambda, (self_uid(), 0))` | Route endpoint messages to RECEIVER |
-| 6 | `old({}, lambda prev: …)` | Persist received-message map |
-| 7 | `match role: case 0: … case _:` | Role-specific task + state assembly |
+| 5 | `broadcast(is_receiver, self_uid())` | Distribute nearest RECEIVER's UID to all nodes |
+| 6 | `spawn(lambda, (self_uid(), receiver_uid))` | Route endpoint messages to RECEIVER |
+| 7 | `old({}, lambda prev: …)` | Persist received-message map |
+| 8 | `match role: case 0: … case _:` | Role-specific task + state assembly |
 
 The `match/case` in step 7 contains **only local expressions** (no primitive
 calls) and is therefore safe to use as a per-role customization point.
@@ -124,18 +125,22 @@ routing_set = sp_collection(
     lambda x, y: x | y,
 )
 
-# Step 5: spawn key includes device UID
-new_msg = (self_uid(), 0) if is_endpoint else None   # noqa: F821
+# Step 5: broadcast nearest RECEIVER's UID to all nodes
+receiver_uid = broadcast(is_receiver, self_uid())    # noqa: F821
+
+# Step 6: spawn key — sender UID + discovered receiver UID
+new_msg = (self_uid(), receiver_uid) if is_endpoint else None   # noqa: F821
 ```
 
 Generated C++ (after transpilation):
 
 ```cpp
-auto parent    = min_hood(CALL, {nbr(CALL, dist_to_receiver), node.uid});
+auto parent      = min_hood(CALL, std::make_tuple(nbr(CALL, dist_to_receiver), node.uid));
 auto routing_set = sp_collection(CALL, dist_to_receiver,
-                      {node.uid}, {}, [=](auto x, auto y) { return (x | y); });
-auto new_msg   = is_endpoint ? std::make_optional(std::make_tuple(node.uid, 0))
-                             : std::nullopt;
+                      set_t{node.uid}, set_t{}, [=](auto x, auto y) { return (x | y); });
+device_t receiver_uid = broadcast(CALL, is_receiver, node.uid);
+auto new_msg     = is_endpoint ? std::make_optional(std::make_tuple(node.uid, receiver_uid))
+                               : std::nullopt;
 ```
 
 `self_uid()` does **not** increment the CALL counter (it is a direct node-field
@@ -207,10 +212,14 @@ Each case branch also includes a comment marking the real-world task the role
 *would* perform (or a placeholder variable where no real implementation is
 provided — this is an exercise example, not a production system).
 
-### spawn + old (message routing)
+### broadcast + spawn + old (message routing)
 
 ```python
-new_msg = (self_uid(), 0) if is_endpoint else None   # sender_uid, receiver_uid=0 placeholder
+# Step 5: RECEIVER nodes broadcast their own UID outward
+receiver_uid = broadcast(is_receiver, self_uid())    # noqa: F821
+
+# Step 6: endpoint nodes inject a message keyed by (sender_uid, receiver_uid)
+new_msg = (self_uid(), receiver_uid) if is_endpoint else None
 
 active_messages = spawn(
     lambda msg: (
@@ -225,11 +234,11 @@ active_messages = spawn(
 received_log = old({}, lambda prev: {**prev, **active_messages})
 ```
 
-Endpoint nodes (roles 2, 3, 5, 6, 7) inject `(self_uid(), 0)` as the spawn key
-each round.  `self_uid()` provides the real device UID in C++ (`node.uid`), making
-each sender's messages unique.  Repeater nodes (roles 0, 4) do not inject messages.
-`receiver_uid=0` remains a placeholder (a broadcast from RECEIVER would be needed
-to distribute the real receiver UID).
+Endpoint nodes (roles 2, 3, 5, 6, 7) inject `(self_uid(), receiver_uid)` as the
+spawn key each round.  `self_uid()` provides the real device UID in C++ (`node.uid`),
+making each sender's messages unique.  `receiver_uid` is the nearest RECEIVER's UID
+discovered via `broadcast` in step 5 — no longer a hardcoded `0` placeholder.
+Repeater nodes (roles 0, 4) do not inject messages.
 
 The spawn lambda returns the routing status integer:
 

@@ -85,23 +85,42 @@ class PhysicalNode(_IpcNodeBase):
 
         Creates the appropriate backend and subscribes to push state updates.
         Safe to call again after a disconnect — the old backend is closed first.
+        If the connection attempt fails at any point, the backend is cleaned up
+        and ``is_connected`` remains ``False`` (RAII-style reset).
         """
         if self.backend is not None:
             self.backend.close()
+            self.backend = None
+        self._connected = False  # pessimistic; set True only on full success
+        try:
+            url = f"http://{self.host}:{self.port}"
+            if self.backend_type == "http":
+                self.backend = HttpBackend(url)
+            elif self.backend_type == "grpc":
+                self.backend = GrpcBackend(port=self.port)
+            else:
+                raise ValueError(
+                    f"Unknown backend type: {self.backend_type!r} (choose 'http' or 'grpc')"
+                )
+            self.backend.subscribe_state_updates(self._dispatch_update)
+            self._connected = True
+            _log.info("Connected to %s:%s via %s", self.host, self.port, self.backend_type)
+        except Exception:
+            if self.backend is not None:
+                try:
+                    self.backend.close()
+                except Exception:
+                    pass
+            self.backend = None
+            raise
 
-        url = f"http://{self.host}:{self.port}"
-        if self.backend_type == "http":
-            self.backend = HttpBackend(url)
-        elif self.backend_type == "grpc":
-            self.backend = GrpcBackend(port=self.port)
-        else:
-            raise ValueError(
-                f"Unknown backend type: {self.backend_type!r} (choose 'http' or 'grpc')"
-            )
-
-        self.backend.subscribe_state_updates(self._dispatch_update)
-        self._connected = True
-        _log.info("Connected to %s:%s via %s", self.host, self.port, self.backend_type)
+    def get_state(self):  # type: ignore[override]
+        """Get current state, marking the link lost on transport errors."""
+        try:
+            return super().get_state()
+        except (ConnectionError, OSError):
+            self._connected = False
+            raise
 
     def close(self) -> None:
         """Disconnect from the device (the physical device keeps running).

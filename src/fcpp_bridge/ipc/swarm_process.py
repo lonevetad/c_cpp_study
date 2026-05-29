@@ -77,6 +77,9 @@ class SwarmProcess(_IpcNodeBase):
         self._known_node_ids: set = set()
         self._next_sequential_id: int = 0
 
+        # Latest snapshot from the most recent update
+        self._latest_snapshot: Optional[SwarmSnapshot] = None
+
     @property
     def node_count(self) -> int:
         return self.num_nodes
@@ -145,6 +148,14 @@ class SwarmProcess(_IpcNodeBase):
     # ------------------------------------------------------------------
     # Core IPC operations
     # ------------------------------------------------------------------
+
+    def latest_snapshot(self) -> Optional[SwarmSnapshot]:
+        """Return the snapshot from the most recent update, or None before the first step."""
+        return self._latest_snapshot
+
+    def _dispatch_update(self, snapshot: SwarmSnapshot) -> None:
+        self._latest_snapshot = snapshot
+        super()._dispatch_update(snapshot)
 
     def step(self) -> None:
         """Execute one simulation round."""

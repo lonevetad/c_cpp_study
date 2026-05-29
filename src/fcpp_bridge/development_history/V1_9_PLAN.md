@@ -1,123 +1,86 @@
 # fcpp_bridge v1.9 — Development Plan
 
 **Created:** 2026-05-28  
-**Context:** This document is the result of a gap-analysis session conducted before v1.9
-implementation begins.  It covers gaps identified in the Known Limitations tables across
-the codebase, together with answers to the reasoning questions posed in the session.
+**Revised:** 2026-05-28 (added Steps E + F; reordered for dependency optimality)
+
+**Revision rationale:** The original plan addressed transpiler gaps, IPC robustness, and
+output-channel design.  A subsequent session (2026-05-28g) added the `AbstractExample`
+Template Method base class, but each subclass still re-implements the aggregate algorithm
+in pure Python — which defeats the entire purpose of `fcpp_bridge` for developers using
+the examples as a starting point.  Steps E and F replace the pure-Python simulation path
+with a full toolchain invocation: validate → transpile → compile → run C++ binary →
+consume state updates as per-node log files.  The `@aggregate_function` class becomes the
+actual executable algorithm, not just a transpilation specimen.
 
 ---
 
 ## Table of Contents
 
-1. [Gap #1 — Receiver UID placeholder (broadcast solution)](#1-gap-1--receiver-uid-placeholder)
-2. [Gap #2 — set_t{node.uid} transpilation](#2-gap-2--set_tnodeuid-transpilation)
-3. [Gap #3 — min_hood with tuple → std::make_tuple](#3-gap-3--min_hood-with-tuple)
-4. [Gap #4 — node_uid() as a companion to self_uid()](#4-gap-4--node_uid-companion)
-5. [Gap #6 — ActivePingStrategy: missing C++ runtime support](#5-gap-6--activepingstrategy-c-runtime)
-6. [Gap #7 — DeviceManager.accept_registrations(port)](#6-gap-7--devicemanageracceptregistrationsport)
-7. [Gap #8 — PhysicalNode: auto-close on exception (RAII-style)](#7-gap-8--physicalnode-auto-close-on-exception)
-8. [Gap #9 — Multi-swarm coordination UI (OutputChannel design)](#8-gap-9--multi-swarm-coordination-ui)
-9. [v1.8 — Logging refactor (print → logger, validation helper)](#9-v18--logging-refactor)
-10. [v1.9 Implementation Checklist](#10-v19-implementation-checklist)
+1. [Step A — Transpiler completeness](#step-a--transpiler-completeness)
+2. [Step B — Library foundations](#step-b--library-foundations)
+3. [Step C — OutputChannel + DeviceManager integration](#step-c--outputchannel--devicemanager-integration)
+4. [Step D — Runtime and physical-device support](#step-d--runtime-and-physical-device-support)
+5. [Step E — AbstractExample toolchain bridge](#step-e--abstractexample-toolchain-bridge)
+6. [Step F — Examples subclasses migration](#step-f--examples-subclasses-migration)
+7. [Implementation Checklist](#implementation-checklist)
+8. [Estimated test delta](#estimated-test-delta)
 
 ---
 
-## 1. Gap #1 — Receiver UID placeholder
+## Step A — Transpiler completeness
 
-### What is the problem?
+*Absorbs original Gaps #1, #2, #3, #4.*
 
-In `worker_role_assignment.py`, the spawn key is `(self_uid(), 0)`.  The sender half
-(`self_uid()`) was fixed in v1.6 — it now correctly transpiles to `node.uid`.  The
-*receiver* half is still `0`, a hard-coded placeholder.  The consequence is that all
-spawn keys share the same destination `0`, so the routing logic treats every message
-as going to node 0, not to the actual nearest RECEIVER node.
+Must be completed before Step E so that every `@aggregate_function` class in the examples
+transpiles to correct C++ from day one.
 
-### Why is receiver_uid needed?
+---
 
-The spawn lambda determines a node's routing status for each message:
+### A.1 — Receiver UID placeholder (was Gap #1)
 
-```python
-STATUS_TERMINATED if is_receiver else               # am I the destination?
-STATUS_INTERNAL if (sender ∈ below or recv ∈ below) else   # am I on the path?
-STATUS_BORDER                                         # I'm off-path
-```
+#### Problem
 
-The `recv ∈ below` check requires each node to know the real UID of the destination
-RECEIVER.  Without this, only the `sender ∈ below` branch fires, so the spanning tree
-does not converge toward the RECEIVER — messages route randomly.
+In `worker_role_assignment.py`, the spawn key is `(self_uid(), 0)`.  The `0` is a
+placeholder for the receiver's UID.  All spawn keys therefore share the same destination
+`0`, so the routing logic treats every message as going to node 0, not the actual nearest
+RECEIVER.
 
-### Why `broadcast` and not `channel_broadcast`?
+#### Why `broadcast` fixes it
 
-`broadcast(root_flag, value)` distributes a *value* from any root (where
-`root_flag=True`) outward through a gradient, so every non-root node receives the
-value of its nearest root.  RECEIVER nodes are the roots; all other nodes receive the
-nearest RECEIVER's UID:
+`broadcast(root_flag, value)` distributes a value from any root (where `root_flag=True`)
+outward through a gradient; every non-root node receives the nearest root's value.
+RECEIVER nodes are the roots; all other nodes receive the nearest RECEIVER's UID:
 
 ```python
-# New step (before spawn):
+# New step before the spawn block:
 receiver_uid = broadcast(is_receiver, self_uid())   # noqa: F821
-# → every node learns the UID of its nearest RECEIVER
 new_msg = (self_uid(), receiver_uid) if is_endpoint else None   # noqa: F821
 ```
 
-`channel_broadcast` creates an *elliptical channel* between two fixed endpoints: a
-source and a destination.  It requires knowing BOTH endpoints' UIDs *in advance*.  Here
-we need the RECEIVER to advertise itself — the destination is dynamically discovered,
-not known a priori.  `channel_broadcast` would be circular: you need the receiver UID
-to define the channel, but the channel is what distributes the receiver UID.
+Why not `channel_broadcast`? That primitive creates an *elliptical channel* between two
+*known* endpoints.  Here the receiver UID is discovered dynamically — using
+`channel_broadcast` would be circular.
 
-`broadcast` is the right primitive because:
-1. Any node where `root_flag=True` acts as the root automatically.
-2. In a multi-receiver topology (multiple nodes with `is_receiver=True`), each
-   non-receiver node naturally learns its *nearest* receiver's UID via the gradient.
-3. No pre-knowledge of UIDs is needed.
+#### Actions
 
-### Actions required (v1.9)
-
-1. Add `broadcast` as a new **step 5a** in `worker_role_assignment.py`:
-
-   ```python
-   # Step 5a: distribute receiver UID to all nodes via broadcast
-   receiver_uid = broadcast(is_receiver, self_uid())   # noqa: F821
-   # replaces the placeholder 0 in step 5b:
-   new_msg = (self_uid(), receiver_uid) if is_endpoint else None   # noqa: F821
-   ```
-
-2. Update `CALL`-order documentation: `broadcast` is a new CALL-counted primitive call
-   and must appear in the flat section before the `match/case`.
-
-3. Update `WORKER_ROLE_ASSIGNMENT.md` — mark "receiver UID placeholder" as ✅ resolved.
-
-4. Update `node_uid__placeholder_flagging.md` — update the `worker_role_assignment.py`
-   row in the affected call-sites table.
-
-5. No new test needed unless the demo simulation is updated to use the real receiver UID
-   (the DSL layer still returns `0` from `broadcast` in Python, so the demo already
-   uses real `nid` directly for correctness).
+1. Add `broadcast` as **step 5a** in `WorkerRoleAssignmentAggregate.compute()`.
+2. Replace `(self_uid(), 0)` spawn key with `(self_uid(), receiver_uid)`.
+3. Update algorithm-step comment count (becomes 8).
+4. Update `WORKER_ROLE_ASSIGNMENT.md` — mark "receiver UID placeholder" ✅ resolved.
+5. Update `node_uid__placeholder_flagging.md` §1 (affected call-sites table).
 
 ---
 
-## 2. Gap #2 — set_t{node.uid} transpilation
+### A.2 — `frozenset` → `set_t{...}` transpilation (was Gap #2)
 
-### Is `set_t` the correct C++ type?
+#### Problem
 
-Yes. In FCPP's `basics.hpp`:
+`frozenset({self_uid()})` currently transpiles verbatim because `frozenset` is not in
+`_FCPP_PRIMITIVES`.  The correct C++ is `set_t{node.uid}`.
 
-```cpp
-using device_t = uint32_t;
-using set_t    = std::unordered_set<device_t>;
-```
+#### Fix
 
-`set_t` is the canonical type for routing sets.  `std::set<device_t>` would also
-compile but would be slightly slower (ordered vs. unordered).  Use `set_t` for
-idiomatic FCPP code.
-
-### Can the transpiler produce `set_t{node.uid}`?
-
-Yes, with a targeted fix.  The current transpiler emits `frozenset(...)` verbatim
-because `frozenset` is not in `_FCPP_PRIMITIVES` and is not handled by `visit_Call`.
-
-The fix is a new mapping in `visit_Call` inside `PythonAstVisitor`:
+Add a handler in `PythonAstVisitor.visit_Call`:
 
 ```python
 if func_name == "frozenset":
@@ -126,50 +89,33 @@ if func_name == "frozenset":
     return "set_t{}"                             # frozenset()   → set_t{}
 ```
 
-`frozenset({self_uid()})` desugars in the AST as `frozenset(Call(Name('set'), ...))`;
-after visiting the inner expression `self_uid()` becomes `node.uid`, so the result is
-`set_t{node.uid}` — correct.
+#### Actions
 
-### Actions required (v1.9)
-
-1. Add `frozenset` handler in `PythonAstVisitor.visit_Call` (2 lines).
-2. Add a transpiler test: `frozenset({self_uid()})` → `set_t{node.uid}`.
-3. Add a transpiler test: `frozenset()` → `set_t{}`.
-4. Update `node_uid__placeholder_flagging.md` §3.3 — mark `frozenset` transpilation as resolved.
+1. Add the two-line `frozenset` handler in `visit_Call`.
+2. Test: `frozenset({self_uid()})` → `set_t{node.uid}`.
+3. Test: `frozenset()` → `set_t{}`.
+4. Update `node_uid__placeholder_flagging.md` §3.3 (mark resolved).
 
 ---
 
-## 3. Gap #3 — min_hood with tuple → std::make_tuple
+### A.3 — `min_hood`/`max_hood` + tuple → `std::make_tuple` (was Gap #3)
 
-### What is wrong today?
+#### Problem
 
 ```python
 parent = min_hood((nbr_dists, self_uid()))
-# transpiles to:
+# currently transpiles to:
 parent = min_hood(CALL, (nbr_dists, node.uid));
 ```
 
-`(x, y)` in C++ is a *comma expression* — it evaluates both operands and returns the
-value of the last one.  This is not a tuple; it silently computes the wrong result.
+`(x, y)` in C++ is a *comma expression* — evaluates both operands and returns the last.
+The correct C++ is `std::make_tuple(nbr_dists, node.uid)`.
 
-The correct C++ is:
+#### Fix (heuristic, Option A)
 
-```cpp
-auto tup    = min_hood(CALL, std::make_tuple(nbr_dists, node.uid));
-device_t parent = std::get<1>(tup);
-```
-
-### What actions are needed?
-
-Two complementary approaches, in order of complexity:
-
-**Option A — Heuristic in `visit_Tuple` / `visit_Call` (recommended for v1.9)**
-
-Detect a Tuple literal passed as the *sole* argument to `min_hood` or `max_hood` and
-wrap it:
+Detect a Tuple literal as the sole argument to `min_hood` / `max_hood`:
 
 ```python
-# In visit_Call, before the general _FCPP_PRIMITIVES path:
 if func_name in ("min_hood", "max_hood") and len(node.args) == 1:
     arg = node.args[0]
     if isinstance(arg, ast.Tuple):
@@ -177,226 +123,163 @@ if func_name in ("min_hood", "max_hood") and len(node.args) == 1:
         return f"{func_name}(CALL, std::make_tuple({', '.join(elems)}))"
 ```
 
-This handles the exact pattern used in all current examples without changing the
-general tuple-to-comma-expression default.
+Note: extracting the UID component requires `std::get<1>(tup)` at the call site.  This
+cannot be automated without type inference; document it as a manual post-step in callers.
 
-**Option B — Full `std::tuple` support (future)**
+#### Actions
 
-Replace the general Python tuple `(x, y, z)` transpilation with
-`std::make_tuple(x, y, z)` everywhere.  This would also require updating subscripts
-on tuple results to use `std::get<N>(...)`.  High impact; deferred to a later version.
-
-### Actions required (v1.9)
-
-1. Add heuristic `min_hood` / `max_hood` + tuple detection in `visit_Call`.
-2. Return expression includes `std::make_tuple(...)` for the tuple elements.
-3. Add `std::get<1>(...)` wrapping for the *callers* that extract the UID:
-   — in `worker_role_assignment.py` the result is named `parent` but only the tuple
-     component 1 (UID) is needed.  The transpiler cannot know this automatically;
-     document as a manual review item.
-4. Add tests for both `min_hood((x, y))` and `max_hood((x, y))`.
-5. Update `node_uid__placeholder_flagging.md` §3.5 — mark as resolved for the
-   `make_tuple` side; note that `std::get<N>` extraction remains a manual post-step.
+1. Add the heuristic in `visit_Call` (before the general `_FCPP_PRIMITIVES` path).
+2. Test: `min_hood((x, y))` → `min_hood(CALL, std::make_tuple(x, y))`.
+3. Test: `max_hood((a, b, c))` → `max_hood(CALL, std::make_tuple(a, b, c))`.
+4. Update `node_uid__placeholder_flagging.md` §3.5 (mark `make_tuple` side resolved;
+   note `std::get<N>` extraction remains a manual post-step).
 
 ---
 
-## 4. Gap #4 — node_uid() as a companion to self_uid()
+### A.4 — `nbr_uid()` documentation (was Gap #4)
 
-### Background
+`self_uid()` already fills the "local UID" gap; a `node_uid()` alias is redundant.
+The open item is the *neighbour* UID field: `node.nbr_uid()` in C++.
 
-`self_uid()` (added in v1.6) transpiles to `node.uid` (local device UID).  The
-question is: could a `node_uid()` function call serve the same purpose?
+#### Actions
 
-### Answer
+1. Verify `nbr_uid` is in `_FCPP_PRIMITIVES` and emits `nbr_uid(CALL)` correctly.
+2. Add a docstring note to `nbr_uid.py` distinguishing it from `self_uid`:
+   - `self_uid()` → `node.uid` (scalar, local device UID).
+   - `nbr_uid()` → `nbr_uid(CALL)` (neighbourhood field of neighbour UIDs).
+3. No new test needed unless `nbr_uid` is currently broken.
 
-`self_uid()` already fills this gap exactly.  A `node_uid()` alias would be redundant.
-However, there is a *different* gap: `node.nbr_uid()` (neighbour UIDs in a field).
-In `min_hood`, the real C++ usage is:
+---
 
-```cpp
-min_hood(CALL, std::make_tuple(nbr(CALL, ds), node.nbr_uid()))
+### A.5 — Step A: Documentation and session save
+
+| File | Action |
+|---|---|
+| `transpiler/python_ast_visitor.py` | `frozenset` handler + `min_hood` tuple handler |
+| `tests/transpiler/test_python_ast_visitor.py` | +5 new tests |
+| `examples/worker_role_assignment.py` | add step 5a; fix spawn key |
+| `development_history/node_uid__placeholder_flagging.md` | mark §1, §3.3, §3.5 resolved |
+| `development_history/WORKER_ROLE_ASSIGNMENT.md` | mark receiver UID gap ✅ |
+| `development_history/session_<date>_stepA_transpiler.txt` | session record |
+| memory `project_fcpp_bridge.md` | update step A status |
+
+---
+
+## Step B — Library foundations
+
+*Absorbs original v1.8 (logging refactor) and Gap #8 (PhysicalNode RAII).*
+
+Cleans up the library before Steps C–F add more code.  No user-visible behaviour change.
+
+---
+
+### B.1 — `print()` → `get_logger()` in library code (was v1.8 §9.1)
+
+| File | Level mapping |
+|---|---|
+| `compiler/compiler_core.py` | cache hit → `DEBUG`; compile start/success → `INFO`; failure → `ERROR` |
+| `ipc/swarm_process.py` | start/connected/closed → `INFO` |
+| `ipc/physical_node.py` | connected/disconnected/reconnect-fail → `INFO` / `WARNING` |
+| `ipc/device_manager.py` | start errors → `WARNING`; step errors → `WARNING` |
+| `runtime/runtime_generator.py` | generated headers → `INFO` |
+| `visualization/text_dashboard.py` | **leave `print`** — it IS the output by design |
+| `grammar/generate_antlr.py` | CLI tool — `print` appropriate, not library code |
+
+---
+
+### B.2 — Validation helper in `_example_utils.py` (was v1.8 §9.2)
+
+Every example repeats:
+
+```python
+warnings = AggregateValidator.validate(MyClass)
+print(f"    OK — {len(warnings)} warning(s)")
+for w in warnings:
+    print(f"       {w}")
 ```
 
-`node.nbr_uid()` produces a *field* of the UIDs of all neighbours (one per neighbour),
-not the local UID.  There is currently no DSL counterpart.
+Extract to `examples/_example_utils.py`:
 
-### Actions required (v1.9 — companion primitive)
-
-1. Add `NbrUid` primitive class in `python_dsl/primitives/nbr_uid.py` (already present
-   as part of the 64 primitives: `nbr_uid` maps to `basics.hpp`).  Verify that
-   `nbr_uid` in `_FCPP_PRIMITIVES` emits `nbr_uid(CALL)` correctly.
-2. Confirm: in `worker_role_assignment.py` step 2, `self_uid()` is the correct
-   tie-breaking key (local UID, not neighbour field); no change needed there.
-3. Document distinction: `self_uid()` → `node.uid` (scalar); `nbr_uid()` → field of
-   neighbour UIDs (used in more advanced patterns).
-
----
-
-## 5. Gap #6 — ActivePingStrategy: missing C++ runtime support
-
-### What is incomplete?
-
-The Python `ActivePingStrategy` is fully implemented.  It sends
-`{"cmd": "ping", "node_id": N}` via the IPC backend and expects
-`{"status": "pong"}` in the response.
-
-The **C++ binary** does not yet implement the ping handler.  The runtime templates in
-`runtime/runtime_generator.py` handle `step` and `get_state` commands; there is no
-`ping` branch.
-
-### Actions required (v1.9)
-
-1. **`runtime/runtime_generator.py`** — add a ping handler to the IPC server loop
-   template.  The handler must:
-   - Check for `{"cmd": "ping", "node_id": N}` in the incoming command.
-   - Reply `{"status": "pong", "node_id": N}` immediately (no FCPP round is needed).
-   - This is a pure IPC-layer concern; no FCPP round is executed.
-
-   Approximate C++ skeleton (in the generated ipc_server.hpp):
-   ```cpp
-   } else if (cmd == "ping") {
-       int nid = request["node_id"];
-       response["status"] = "pong";
-       response["node_id"] = nid;
-   ```
-
-2. **`ActivePingStrategy` docstring** — update to remove the "Requires C++ ping handler"
-   warning once the runtime template ships the handler.
-
-3. **New test** — `test_liveness_strategy.py`: mock the backend's `send_command` to
-   return `{"status": "pong"}` and verify that `ActivePingStrategy.check()` returns
-   `True` for the pinged node.  (This test already partially exists; extend it to cover
-   the round-trip scenario with the new response format.)
+```python
+def report_validation(cls, logger=None, indent="    "):
+    from fcpp_bridge.python_dsl.validators import AggregateValidator
+    warnings = AggregateValidator.validate(cls)
+    msg = f"{indent}OK — {len(warnings)} warning(s)"
+    (logger.info if logger else print)(msg)
+    for w in warnings:
+        (logger.warning if logger else print)(f"{indent}  {w}")
+    return warnings
+```
 
 ---
 
-## 6. Gap #7 — DeviceManager.accept_registrations(port)
+### B.3 — `PhysicalNode.connect()` RAII-style reset (was Gap #8)
 
-### What is missing?
+If `connect()` raises partway through, `_connected` can be left `True` while `backend`
+is in a partially initialised state.
 
-Currently Python *connects to* physical devices; it never *accepts* connections from
-them.  A device that self-registers (e.g., a drone that powers on and sends a
-registration packet) has no entry point.
-
-### What is needed?
-
-`DeviceManager.accept_registrations(port)` must:
-1. Start a lightweight TCP/HTTP server on `port`.
-2. When a device sends a registration payload (JSON: `{"name": str, "host": str,
-   "port": int, "backend": str}`), create a `PhysicalNode` and register it via
-   `add_physical(name, host, port, backend_type)`.
-3. Fire optional `on_registered(name, node)` callbacks for each new registration.
-4. Provide `stop_accepting_registrations()` to shut the server down.
-
-### Design choices
-
-- **HTTP (asyncio + `http.server`)** — zero external dependencies; fits the existing
-  `HttpBackend` pattern.
-- The registration server runs in a daemon thread (like the heartbeat monitor).
-- The payload schema should be documented and versioned (add a `"version": "1.0"` field).
-
-### Actions required (v1.9)
-
-1. **`ipc/device_manager.py`**: add `accept_registrations(port, on_registered=None)`,
-   `stop_accepting_registrations()`, and `_registration_server_loop()` (daemon thread).
-2. **`tests/ipc/test_device_manager.py`**: add tests for registration flow using
-   `urllib.request.urlopen` to simulate a device self-registering.
-3. **`TUTORIAL_in_depth.md`**: add a §"Self-registering physical devices" subsection.
-4. **`README.md`**: add `accept_registrations` to the DeviceManager feature bullet.
-
----
-
-## 7. Gap #8 — PhysicalNode: auto-close on exception (RAII-style)
-
-### What C++14 mechanism exists?
-
-In C++, **RAII** (Resource Acquisition Is Initialization) ensures that a destructor
-runs automatically when an object goes out of scope, even if an exception is thrown.
-This guarantees that resources (sockets, file handles, memory) are always released.
-
-In Python, the equivalent is:
-- **Context manager** (`with` statement / `__enter__` / `__exit__`) — already
-  implemented for `PhysicalNode`.
-- **`try/finally`** — runs cleanup regardless of exceptions.
-- **`contextlib.closing`** and **`contextlib.suppress`** — higher-level helpers.
-
-The current gap: if `connect()` raises an exception partway through (e.g., the
-`GrpcBackend` constructor fails), `_connected` remains `True` from a previous
-successful connect, and `backend` may be in a partially initialised state.  Subsequent
-calls (`is_connected`, `get_state()`) can behave incorrectly.
-
-### Fix (v1.9)
-
-Wrap the `connect()` body in `try/except` and reset state on failure:
+Fix: pessimistic reset before any allocation; rollback on failure:
 
 ```python
 def connect(self) -> None:
     if self.backend is not None:
         self.backend.close()
         self.backend = None
-    self._connected = False          # pessimistic reset before any allocation
+    self._connected = False          # pessimistic reset
     try:
-        url = f"http://{self.host}:{self.port}"
-        if self.backend_type == "http":
-            self.backend = HttpBackend(url)
-        elif self.backend_type == "grpc":
-            self.backend = GrpcBackend(port=self.port)
-        else:
-            raise ValueError(...)
-        self.backend.subscribe_state_updates(self._dispatch_update)
-        self._connected = True       # only set True after full success
+        # ... create backend ...
+        self._connected = True       # only set True on full success
     except Exception:
         if self.backend is not None:
-            try:
-                self.backend.close()
-            except Exception:
-                pass
+            try: self.backend.close()
+            except Exception: pass
         self.backend = None
         raise
 ```
 
-Similarly, wrap backend calls in `get_state()`, `step()`, and the reconnect loop with
-`except Exception` → `self._connected = False`.
-
-### Actions required (v1.9)
-
-1. **`ipc/physical_node.py`**: refactor `connect()` as above.
-2. **`ipc/_ipc_node_base.py`**: wrap `get_state()` and `send_command()` calls to set
-   `_connected = False` on `ConnectionError` / `OSError`.
-3. **`tests/ipc/test_physical_node.py`**: add test where backend constructor raises →
-   verify `is_connected` is `False` and `backend` is `None` after the exception.
+Also wrap `get_state()` and `send_command()` callers: set `_connected = False` on
+`ConnectionError` / `OSError`.
 
 ---
 
-## 8. Gap #9 — Multi-swarm coordination UI (OutputChannel design)
+### B.4 — Step B: Documentation and session save
 
-### User specification (answered 2026-05-28)
+| File | Action |
+|---|---|
+| `compiler/compiler_core.py` | print → logger |
+| `ipc/swarm_process.py` | print → logger |
+| `ipc/physical_node.py` | print → logger + RAII reset |
+| `ipc/device_manager.py` | print → logger |
+| `runtime/runtime_generator.py` | print → logger |
+| `examples/_example_utils.py` | add `report_validation()` |
+| `tests/ipc/test_physical_node.py` | +3 tests (RAII: backend raises, partial init, etc.) |
+| `development_history/session_<date>_stepB_foundations.txt` | session record |
+| memory `project_fcpp_bridge.md` | update step B status |
 
-> "Allow flexible, configurable and multiple-channel output: one or more of those
-> options could be provided (if necessary, a proxy will forward the data received to
-> the registered output channels; the forwarding might be sequential-and-synchronous
-> or parallel-and-asynchronous depending on a constructor-level parameter) and the
-> backend accepts an output channel (or the 'proxy' previously mentioned: define a
-> super-class by applying either Prototype Programming and/or Object Oriented
-> Programming paradigms), defaulting to a plain but configurable logging system."
+---
 
-### Design
+## Step C — OutputChannel + DeviceManager integration
 
-The design mirrors the existing `ListenerProxy` pattern (which dispatches `SwarmSnapshot`
-updates to multiple listeners), applied now to fleet-wide state output from
-`DeviceManager`.
+*Absorbs original Gap #9.*
+
+Provides the pluggable output-channel abstraction used by `DeviceManager` for status
+messages, and available to `AbstractExample` (Step E) as an optional fan-out mechanism.
+
+---
+
+### C.1 — Design
+
+The design mirrors the existing `ListenerProxy` pattern applied to fleet-wide output.
 
 #### Class hierarchy
 
 ```
 OutputChannel (ABC)         — abstract base; Prototype pattern (clone())
-├── LoggingOutputChannel    — default; writes to logger (configurable level/format)
+├── LoggingOutputChannel    — writes via get_logger() (configurable level/format)
 ├── FileOutputChannel       — writes JSON/CSV lines to a file or stream
-├── CallbackOutputChannel   — wraps a Callable[[str, Any], None] (name, state)
+├── CallbackOutputChannel   — wraps Callable[[str, Any], None] (name, state)
 └── ProxyOutputChannel      — fan-out to N channels; sequential or parallel
 ```
-
-All classes implement `Prototype.clone()` for configuration duplication.
 
 #### API
 
@@ -408,160 +291,492 @@ class OutputChannel(ABC):
 
 class ProxyOutputChannel(OutputChannel):
     def __init__(self, mode: str = "sequential"): ...   # "sequential"|"parallel"
-    def add_channel(self, ch: OutputChannel) -> int: ...   # returns channel ID
+    def add_channel(self, ch: OutputChannel) -> int: ...
     def remove_channel(self, channel_id: int) -> None: ...
 ```
 
-#### Integration
-
-`DeviceManager` accepts an optional `output_channel=` constructor kwarg.  If `None`
-(default), a `LoggingOutputChannel` is created automatically.  Methods that currently
-`print(...)` (e.g. `start_all`, `connect_all`, `close_all`, `step_all`) route their
-status messages through `output_channel.send(name, payload)` instead.
+#### `DeviceManager` integration
 
 ```python
 class DeviceManager:
     def __init__(self, output_channel: Optional[OutputChannel] = None):
         self._output = output_channel or LoggingOutputChannel()
-        ...
-
-    def start_all(self) -> None:
-        for name, device in self._devices.items():
-            try:
-                device.start()
-                self._output.send(name, {"event": "started"})
-            except Exception as exc:
-                self._output.send(name, {"event": "start_failed", "error": str(exc)})
 ```
 
-#### Where to add the new files
-
-```
-ipc/output_channel.py           OutputChannel ABC + clone() mixin
-ipc/logging_output_channel.py   LoggingOutputChannel(level, fmt)
-ipc/file_output_channel.py      FileOutputChannel(path_or_stream, format="json")
-ipc/callback_output_channel.py  CallbackOutputChannel(fn)
-ipc/proxy_output_channel.py     ProxyOutputChannel(mode="sequential")
-```
-
-`ipc/__init__.py` re-exports all five.
-
-### Actions required (v1.9)
-
-1. Add the five output-channel files listed above.
-2. Refactor `DeviceManager.__init__` to accept `output_channel=` and route all status
-   prints through it.
-3. Add 10–15 tests in `tests/ipc/test_output_channel.py`.
-4. Update `README.md` feature table.
-5. Update `TUTORIAL_in_depth.md` with a "Multi-swarm output channels" section.
+Methods that currently `print(...)` status messages route through
+`self._output.send(name, payload)` instead.
 
 ---
 
-## 9. v1.8 — Logging refactor
+### C.2 — Step C: Actions and Documentation
 
-This is an **implementation milestone** (not planning):
-
-### 9.1 print() → get_logger() in library code
-
-All `print()` calls in the library core (not in examples or CLI scripts) are replaced
-with the existing `log.py` infrastructure:
-
-| File | Level mapping |
+| File | Action |
 |---|---|
-| `compiler/compiler_core.py` | Cache hit → `DEBUG`; compile start/success → `INFO`; failure → `ERROR` |
-| `ipc/swarm_process.py` | Start/connected/closed → `INFO` |
-| `ipc/physical_node.py` | Connected/disconnected/reconnect-fail → `INFO` / `WARNING` |
-| `ipc/device_manager.py` | start_all errors → `WARNING`; step_all errors → `WARNING` |
-| `runtime/runtime_generator.py` | Generated headers → `INFO` |
-| `visualization/text_dashboard.py` | Dashboard output remains `print` (it IS the output by design) |
-| `grammar/generate_antlr.py` | CLI tool; `print` appropriate (not library code) |
+| `ipc/output_channel.py` | `OutputChannel` ABC + `clone()` mixin (NEW) |
+| `ipc/logging_output_channel.py` | `LoggingOutputChannel` (NEW) |
+| `ipc/file_output_channel.py` | `FileOutputChannel(path_or_stream, format="json")` (NEW) |
+| `ipc/callback_output_channel.py` | `CallbackOutputChannel(fn)` (NEW) |
+| `ipc/proxy_output_channel.py` | `ProxyOutputChannel(mode="sequential")` (NEW) |
+| `ipc/__init__.py` | re-export all five |
+| `ipc/device_manager.py` | `output_channel=` kwarg; route status prints |
+| `tests/ipc/test_output_channel.py` | +15 tests (NEW) |
+| `TUTORIAL_in_depth.md` | add §"Multi-swarm output channels" |
+| `README.md` | add `OutputChannel` to feature table |
+| `development_history/session_<date>_stepC_outputchannel.txt` | session record |
+| memory `project_fcpp_bridge.md` | update step C status |
 
-### 9.2 Validation warning helper
+---
 
-Every example repeats this pattern:
-```python
-warnings = AggregateValidator.validate(MyClass)
-print(f"    OK — {len(warnings)} warning(s)")
-for w in warnings:
-    print(f"       {w}")
+## Step D — Runtime and physical-device support
+
+*Absorbs original Gap #6 (ActivePingStrategy C++ handler) and Gap #7
+(DeviceManager.accept_registrations).*
+
+Both concerns are C++ / IPC-layer additions that the examples will use indirectly
+(liveness checking during simulation runs).
+
+---
+
+### D.1 — ActivePingStrategy: C++ ping handler (was Gap #6)
+
+`ActivePingStrategy` is fully implemented in Python but the C++ binary has no `ping`
+branch in its IPC server loop.  Add to `runtime_generator.py`'s generated
+`ipc_server.hpp`:
+
+```cpp
+} else if (cmd == "ping") {
+    int nid = request["node_id"];
+    response["status"] = "pong";
+    response["node_id"] = nid;
 ```
 
-Refactored to a single utility function, placed in the new
-`examples/_example_utils.py` module:
+No FCPP round is executed; this is a pure IPC-layer acknowledgement.
+
+#### Actions
+
+1. Add `ping` branch to the C++ template in `RuntimeGenerator.ipc_server_header()`.
+2. Update `ActivePingStrategy` docstring: remove "Requires C++ ping handler" warning.
+3. Extend `tests/ipc/test_liveness_strategy.py` to cover the pong round-trip scenario.
+
+---
+
+### D.2 — `DeviceManager.accept_registrations(port)` (was Gap #7)
+
+Allows physical devices to self-register instead of requiring Python to initiate
+connections.
+
+#### Design
 
 ```python
-def report_validation(cls, logger=None, indent="    "):
-    """Validate cls, print/log results, return warnings list.
-    Raises on validation failure."""
+def accept_registrations(
+    self,
+    port: int,
+    on_registered: Optional[Callable[[str, PhysicalNode], None]] = None,
+) -> None: ...
+
+def stop_accepting_registrations(self) -> None: ...
+```
+
+Payload schema (JSON, POST to `/register`):
+
+```json
+{"version": "1.0", "name": "drone-7", "host": "192.168.1.50", "port": 8080, "backend": "http"}
+```
+
+Runs a daemon HTTP server thread; on receipt calls `add_physical(name, host, port, backend)`.
+
+#### Actions
+
+1. `ipc/device_manager.py`: add `accept_registrations`, `stop_accepting_registrations`,
+   `_registration_server_loop` (daemon thread using `http.server`).
+2. `tests/ipc/test_device_manager.py`: +5 tests (registration flow via
+   `urllib.request.urlopen`).
+3. `TUTORIAL_in_depth.md`: add §"Self-registering physical devices".
+4. `README.md`: add `accept_registrations` to DeviceManager bullet.
+
+---
+
+### D.3 — Step D: Documentation and session save
+
+| File | Action |
+|---|---|
+| `runtime/runtime_generator.py` | add ping handler to C++ template |
+| `ipc/device_manager.py` | `accept_registrations` + loop |
+| `tests/ipc/test_liveness_strategy.py` | +3 tests (pong round-trip) |
+| `tests/ipc/test_device_manager.py` | +5 tests (registration flow) |
+| `TUTORIAL_in_depth.md` | §"Self-registering physical devices" |
+| `README.md` | feature table updates |
+| `development_history/session_<date>_stepD_runtime.txt` | session record |
+| memory `project_fcpp_bridge.md` | update step D status |
+
+---
+
+## Step E — AbstractExample toolchain bridge
+
+*New.  Depends on Steps A–D being complete (or at least Step A for correct C++ output
+and Step B for clean library foundations).*
+
+---
+
+### E.1 — Motivation
+
+After the 2026-05-28g session, every example file has two classes:
+
+- `@aggregate_function` class — the algorithm specification; meant to be transpiled to
+  C++.  Its `compute()` calls DSL primitives (`bis_distance`, `broadcast`, etc.) that do
+  not exist in Python.
+- `AbstractExample` subclass — a pure-Python simulation that *re-implements the same
+  algorithm* using regular Python math, bypassing the entire toolchain.
+
+This defeats the purpose of `fcpp_bridge` for developers reading the examples.  A
+developer should see the Python DSL being transpiled and run through FCPP, not a
+lookalike re-implementation in plain Python.
+
+The fix: `AbstractExample.run()` must invoke the full pipeline:
+
+```
+validate(@aggregate_function class)
+  → transpile → C++ source
+  → compile → binary  (SHA-256 cached; recompile only when source changes)
+  → SwarmProcess.start()
+  → add nodes with initial positions
+  → for each round: SwarmProcess.step()
+  → receive SwarmSnapshot via UpdatesListener callback
+  → write per-node log files from snapshot.nodes
+```
+
+---
+
+### E.2 — New AbstractExample interface
+
+#### Abstract methods (required)
+
+| Method | Signature | Notes |
+|---|---|---|
+| `aggregate_class` | `@property → Type` | The `@aggregate_function` class to transpile and run |
+| `log_prefix` | `@property → str` | Unchanged — used in log file names |
+| `initial_positions` | `() → dict[int, tuple]` | Unchanged — seeds node positions in C++ binary |
+| `log_header` | `(node_id, state_data) → str` | `state_data` is now `Any` from `NodeState.state_data` |
+| `log_line` | `(round_num, node_id, state_data) → str` | Same signature; `state_data` comes from the FCPP snapshot |
+
+#### Removed abstract methods
+
+| Removed | Reason |
+|---|---|
+| `round_step(round_num, positions, states) → (positions, states)` | Algorithm runs in C++; Python no longer re-implements it |
+| `initial_states(positions) → dict` | C++ binary owns initial state via `initial_state()` in the aggregate class |
+
+#### Optional hooks (updated signatures)
+
+| Hook | Old signature | New signature | Notes |
+|---|---|---|---|
+| `on_simulation_start()` | `→ None` | unchanged | Called once before the first round |
+| `on_simulation_end()` | `→ None` | unchanged | Called once after all rounds |
+| `on_round_complete` | `(round_num, positions, states) → None` | `(round_num, snapshot: SwarmSnapshot) → None` | `SwarmSnapshot` replaces the Python-computed dicts |
+
+#### New properties (optional override)
+
+```python
+@property
+def build_dir(self) -> Path:
+    """Cache directory for compiled C++ binaries.  Default: examples/.fcpp_build/"""
+    return Path(__file__).parent / ".fcpp_build"
+
+@property
+def cpp_dir(self) -> Path:
+    """Directory where transpiled C++ source is written.  Default: examples/.fcpp_cpp/"""
+    return Path(__file__).parent / ".fcpp_cpp"
+```
+
+#### New `run()` skeleton
+
+```python
+def run(self, num_rounds: int) -> None:
+    from fcpp_bridge.transpiler import Transpiler
+    from fcpp_bridge.compiler import Compiler
     from fcpp_bridge.python_dsl.validators import AggregateValidator
-    warnings = AggregateValidator.validate(cls)
-    msg = f"{indent}OK — {len(warnings)} warning(s)"
-    if logger:
-        logger.info(msg)
-        for w in warnings:
-            logger.warning(f"{indent}  {w}")
-    else:
-        print(msg)
-        for w in warnings:
-            print(f"{indent}  {w}")
-    return warnings
+    from fcpp_bridge.ipc.swarm_process import SwarmProcess
+    from fcpp_bridge.ipc.swarm_snapshot import SwarmSnapshot
+
+    # Validate
+    AggregateValidator.validate(self.aggregate_class)
+
+    # Transpile
+    t = Transpiler(self.aggregate_class)
+    cpp_code = t.generate()
+
+    # Compile (cached by SHA-256)
+    self.build_dir.mkdir(parents=True, exist_ok=True)
+    self.cpp_dir.mkdir(parents=True, exist_ok=True)
+    compiler = Compiler(cache_dir=self.build_dir, cpp_dir=self.cpp_dir)
+    binary = compiler.get_or_compile(cpp_code, self.log_prefix)
+
+    # Prepare log directory
+    self.log_dir.mkdir(exist_ok=True)
+
+    # Launch swarm
+    positions = self.initial_positions()
+    swarm = SwarmProcess(binary_path=binary, num_nodes=len(positions))
+
+    log_files: dict = {}
+
+    def _on_snapshot(snapshot: SwarmSnapshot) -> None:
+        for ns in snapshot.nodes:
+            nid, state = ns.node_id, ns.state_data
+            if nid not in log_files:
+                path = self.log_dir / f"node_{nid}_{self.log_prefix}.log"
+                lf = open(path, "w")
+                lf.write(self.log_header(nid, state))
+                log_files[nid] = lf
+            log_files[nid].write(
+                self.log_line(snapshot.round_number, nid, state))
+        # Close files for nodes no longer in snapshot
+        live = {ns.node_id for ns in snapshot.nodes}
+        for gone in set(log_files) - live:
+            log_files.pop(gone).close()
+
+    swarm.add_listener(_on_snapshot)
+    swarm.start()
+
+    for nid, pos in positions.items():
+        swarm.add_node_explicit(nid, pos)
+
+    self.on_simulation_start()
+
+    for round_num in range(num_rounds):
+        swarm.step()
+        # _on_snapshot fires synchronously within step(); snapshot already written
+        last_snapshot = swarm.latest_snapshot()   # or equivalent API
+        self.on_round_complete(round_num, last_snapshot)
+
+    for lf in log_files.values():
+        lf.close()
+
+    swarm.close()
+    self.on_simulation_end()
 ```
 
-All example `main()` functions then call `report_validation(MyClass)`.
+**Note:** the exact API for retrieving the latest snapshot (`swarm.latest_snapshot()` or
+`swarm.last_snapshot`) must be verified against the current `SwarmProcess` implementation
+and added if missing.
 
 ---
 
-## 10. v1.9 Implementation Checklist
+### E.3 — Impact on `SwarmProcess`
 
-### Transpiler (python_ast_visitor.py)
+Verify / add:
 
-- [ ] Add `frozenset` → `set_t{...}` in `visit_Call`
-- [ ] Add `min_hood`/`max_hood` + Tuple → `std::make_tuple(...)` in `visit_Call`
-- [ ] Tests: `test_frozenset_to_set_t`, `test_min_hood_tuple_make_tuple`
-
-### worker_role_assignment.py
-
-- [ ] Add step 5a: `receiver_uid = broadcast(is_receiver, self_uid())`
-- [ ] Change spawn key: `new_msg = (self_uid(), receiver_uid) if is_endpoint else None`
-- [ ] Update algorithm table comment (step count becomes 8)
-
-### IPC layer
-
-- [ ] `PhysicalNode.connect()` — pessimistic `_connected` reset + exception cleanup
-- [ ] `DeviceManager` — `accept_registrations(port)` + `stop_accepting_registrations()`
-- [ ] `OutputChannel` ABC + 4 implementations + `ProxyOutputChannel`
-- [ ] `DeviceManager.__init__` — `output_channel=` kwarg
-
-### Runtime templates
-
-- [ ] `runtime_generator.py` — add `ping` handler in generated C++ IPC server loop
-
-### Tests
-
-- [ ] `test_python_ast_visitor.py` — frozenset, min_hood tuple
-- [ ] `test_liveness_strategy.py` — ActivePingStrategy full pong round-trip
-- [ ] `test_physical_node.py` — auto-close on connect exception
-- [ ] `test_device_manager.py` — accept_registrations flow
-- [ ] `test_output_channel.py` — new file, 10–15 tests
-
-### Documentation
-
-- [ ] `node_uid__placeholder_flagging.md` — update §1, §3.3, §3.5
-- [ ] `WORKER_ROLE_ASSIGNMENT.md` — mark receiver UID gap as resolved in v1.9
-- [ ] `TUTORIAL_in_depth.md` — add multi-swarm output channels section
-- [ ] `README.md` — v1.9 changelog section
+- `SwarmProcess.latest_snapshot() → Optional[SwarmSnapshot]` — returns the snapshot from
+  the most recent `step()` call (needed by `on_round_complete`).
+- `SwarmProcess.add_node_explicit(node_id, position)` — already exists; confirm signature
+  accepts `dict[int, tuple]` keys.
 
 ---
 
-## Estimated test delta (v1.9)
+### E.4 — Step E: Actions and Documentation
 
-| Component | New tests |
+| File | Action |
 |---|---|
-| Transpiler (frozenset, min_hood tuple) | +6 |
-| ActivePingStrategy C++ round-trip | +3 |
-| PhysicalNode exception safety | +4 |
-| DeviceManager.accept_registrations | +5 |
-| OutputChannel + ProxyOutputChannel | +15 |
-| **Total** | **+33** |
+| `examples/abstract_example.py` | Full redesign per E.2 |
+| `ipc/swarm_process.py` | Verify/add `latest_snapshot()` |
+| `tests/examples/test_abstract_example.py` | NEW — +10 tests (mock Transpiler, Compiler, SwarmProcess; verify run() lifecycle) |
+| `development_history/abstract_example_toolchain.md` | NEW — design rationale + interface diff old→new |
+| `development_history/EXAMPLES_JOURNAL.md` | Add v2.1 section (toolchain bridge) |
+| `DSL_GUIDE.md` | Update §"Running examples" to describe toolchain invocation |
+| `README.md` | Update example usage section |
+| `TUTORIAL_simple.md` | Update to show that running an example invokes the toolchain |
+| `development_history/session_<date>_stepE_toolchain_bridge.txt` | session record |
+| memory `project_fcpp_bridge.md` | update step E status + new interface |
 
-Projected total: **611 + 33 = 644 tests**.
+---
+
+## Step F — Examples subclasses migration
+
+*New.  Depends on Step E being complete.*
+
+Each of the seven example files must be updated to match the new `AbstractExample`
+interface.  The pure-Python algorithm re-implementations are removed; the
+`@aggregate_function` class becomes the actual running code.
+
+---
+
+### F.1 — What changes in every subclass
+
+**Removed per subclass:**
+
+- `round_step()` implementation — was a Python re-implementation of the aggregate
+  algorithm; no longer needed
+- `initial_states()` implementation — C++ handles it; Python-side dataclass constructors
+  in `round_step` are gone
+- Module-level `_bis_distance_*()` helpers — were pure-Python approximations of FCPP
+  primitives; remove entirely
+- Other pure-Python helpers that mirror C++ primitives (e.g., `_spanning_tree()`,
+  `_routing_sets()`, etc.)
+
+**Added per subclass:**
+
+- `aggregate_class` property returning the existing `@aggregate_function` class defined
+  in the same file
+- `log_line(round_num, node_id, state_data)` updated: `state_data` is now `Any`
+  (dict/JSON from the FCPP binary), not a Python `@dataclass` — field access changes
+  from `state.in_channel` to `state_data["in_channel"]` or similar (depends on
+  serialization format agreed with the C++ runtime)
+
+**Updated per subclass:**
+
+- `on_round_complete(round_num, snapshot: SwarmSnapshot)` — new signature; any logic
+  that previously extracted aggregate counts from the Python-computed states dict is now
+  extracted from `snapshot.nodes`
+- `on_simulation_end()` — same purpose; `_final_states` attribute pattern is removed
+  (get data from `snapshot` in `on_round_complete` instead)
+- `log_header(node_id, state_data)` — usually unchanged in content; type annotation
+  update only
+
+**Potentially updated in `@aggregate_function` classes:**
+
+Some examples used Python-side scheduling (e.g., `collection_compare.py` switches the
+source node at round `NUM_ROUNDS // 2` from inside `round_step`).  In the toolchain
+path the C++ binary runs autonomously; Python cannot inject per-round state changes
+without an explicit IPC mechanism.  For each such example, choose one of:
+
+a) **Model the scheduling inside `compute()`** using FCPP time primitives (`counter()`,
+   `round_since()`, `constant_after()`) — preferred, educationally valuable.
+b) **Accept static behaviour** — simplify the example to remove the dynamic aspect.
+c) **Extend AbstractExample with a `pre_round_inject(round_num)` optional hook** that
+   sends an IPC command to specific nodes before `step()` is called — add to Step E if
+   this turns out to be necessary for more than one example.
+
+---
+
+### F.2 — Per-example migration checklist
+
+| Example | Pure-Python helpers to remove | Scheduling logic | Extra logs |
+|---|---|---|---|
+| `spreading_collection.py` | `_spreading_collection_step()` | none | none |
+| `chain_decaying.py` | `_decay_step()` | none | none |
+| `channel_broadcast.py` | `_bis_distance()` | none | none |
+| `collection_compare.py` | BIS/broadcast manual loop | source switches at round 12.5 → move to `compute()` using `counter()` | none |
+| `message_dispatch.py` | `_bis_distance_msg()`, spanning-tree, routing-set loops | message generation rounds 10–50 → move to `compute()` using `counter()` | none (in-flight tracking moves to C++ state) |
+| `worker_role_assignment.py` | `_bis_distance_worker()`, routing-set loops | none | `receiver_messages.log` — hook remains in `on_simulation_start/end`; write via `on_round_complete(snapshot)` |
+| `communication_roles_assignment.py` | `_bis_dist_comm()`, 6-step algorithm body | none | `comm_receiver_messages.log` — same as above |
+
+For `message_dispatch.py` and `worker_role_assignment.py`, the state structs
+(`MessageState`, `WorkerState`) need additional fields to expose what was previously
+Python-side cross-round state (e.g., `total_received: int`, `in_flight_count: int`) so
+that `log_line()` can write them from `state_data`.
+
+---
+
+### F.3 — Step F: Actions and Documentation
+
+| File | Action |
+|---|---|
+| `examples/spreading_collection.py` | Remove `round_step` + helpers; add `aggregate_class` |
+| `examples/chain_decaying.py` | Same |
+| `examples/channel_broadcast.py` | Same |
+| `examples/collection_compare.py` | Same; update `compute()` to use `counter()` for source switch |
+| `examples/message_dispatch.py` | Same; update `compute()` + state dataclass for in-flight exposure |
+| `examples/worker_role_assignment.py` | Same; update `on_round_complete(snapshot)` for recv log |
+| `examples/communication_roles_assignment.py` | Same |
+| `development_history/EXAMPLES_JOURNAL.md` | Add v2.1 entry per example |
+| `development_history/session_<date>_stepF_examples_migration.txt` | session record |
+| memory `project_fcpp_bridge.md` | update test count + step F status |
+
+**Verification per example:** smoke-test with `--steps validate transpile` (can run
+without FCPP installed); full `--steps validate transpile compile run` requires FCPP
+headers.
+
+---
+
+## Implementation Checklist
+
+Ordered by dependency; each step must end with docs, memory save, and session record.
+
+### Step A — Transpiler completeness
+
+- [ ] `frozenset` → `set_t{...}` in `PythonAstVisitor.visit_Call`
+- [ ] `min_hood`/`max_hood` + Tuple → `std::make_tuple(...)` in `visit_Call`
+- [ ] `worker_role_assignment.py`: add step 5a `receiver_uid = broadcast(...)`; fix spawn key
+- [ ] Tests: `test_frozenset_to_set_t` (2), `test_min_max_hood_tuple` (2), `test_worker_broadcast_transpiles` (1)
+- [ ] Docs: `node_uid__placeholder_flagging.md`, `WORKER_ROLE_ASSIGNMENT.md`
+- [ ] Save session record `session_<date>_stepA_transpiler.txt`
+- [ ] Save memory
+
+### Step B — Library foundations
+
+- [ ] `print` → `get_logger()` in: `compiler_core.py`, `swarm_process.py`,
+  `physical_node.py`, `device_manager.py`, `runtime_generator.py`
+- [ ] `PhysicalNode.connect()`: pessimistic `_connected` reset + exception rollback
+- [ ] `_IpcNodeBase`: wrap `get_state()`/`send_command()` to set `_connected = False` on error
+- [ ] `_example_utils.py`: add `report_validation()`
+- [ ] Tests: `test_physical_node.py` +3 (RAII scenarios)
+- [ ] Save session record `session_<date>_stepB_foundations.txt`
+- [ ] Save memory
+
+### Step C — OutputChannel
+
+- [ ] `ipc/output_channel.py` — ABC + `clone()`
+- [ ] `ipc/logging_output_channel.py`
+- [ ] `ipc/file_output_channel.py`
+- [ ] `ipc/callback_output_channel.py`
+- [ ] `ipc/proxy_output_channel.py`
+- [ ] `ipc/__init__.py` re-exports
+- [ ] `device_manager.py`: `output_channel=` kwarg; route status messages
+- [ ] Tests: `test_output_channel.py` +15
+- [ ] Docs: `TUTORIAL_in_depth.md` §, `README.md`
+- [ ] Save session record `session_<date>_stepC_outputchannel.txt`
+- [ ] Save memory
+
+### Step D — Runtime & physical-device support
+
+- [ ] `runtime_generator.py`: add `ping` handler to C++ IPC server template
+- [ ] `ActivePingStrategy` docstring: remove "Requires C++ ping handler" warning
+- [ ] `device_manager.py`: `accept_registrations(port)` + `stop_accepting_registrations()`
+- [ ] Tests: `test_liveness_strategy.py` +3; `test_device_manager.py` +5
+- [ ] Docs: `TUTORIAL_in_depth.md` §, `README.md`
+- [ ] Save session record `session_<date>_stepD_runtime.txt`
+- [ ] Save memory
+
+### Step E — AbstractExample toolchain bridge
+
+- [ ] Investigate `SwarmProcess.latest_snapshot()` — add if missing
+- [ ] `abstract_example.py`: rewrite `run()` per E.2; update abstract method set
+- [ ] Verify `log_header`/`log_line` signatures with `state_data: Any` (not dataclass)
+- [ ] `tests/examples/test_abstract_example.py` — NEW, +10 tests (mocked pipeline)
+- [ ] Docs: `abstract_example_toolchain.md` (NEW), `EXAMPLES_JOURNAL.md`, `DSL_GUIDE.md`,
+  `README.md`, `TUTORIAL_simple.md`
+- [ ] Save session record `session_<date>_stepE_toolchain_bridge.txt`
+- [ ] Save memory
+
+### Step F — Examples subclasses migration
+
+For each of the 7 examples:
+- [ ] `spreading_collection.py`: remove `round_step`, helpers; add `aggregate_class`
+- [ ] `chain_decaying.py`: same
+- [ ] `channel_broadcast.py`: same
+- [ ] `collection_compare.py`: same + update `compute()` (source switch → `counter()`)
+- [ ] `message_dispatch.py`: same + update `compute()` + state struct fields
+- [ ] `worker_role_assignment.py`: same + update `on_round_complete(snapshot)` for recv log
+- [ ] `communication_roles_assignment.py`: same + update `on_round_complete(snapshot)` for comm log
+- [ ] Smoke-test all examples (`--steps validate transpile` minimum)
+- [ ] Docs: `EXAMPLES_JOURNAL.md` v2.1 section; update per-example entries
+- [ ] Save session record `session_<date>_stepF_examples_migration.txt`
+- [ ] Save memory
+
+---
+
+## Estimated test delta
+
+| Step | Component | New tests |
+|---|---|---|
+| A | Transpiler (frozenset, min_hood tuple, broadcast) | +5 |
+| B | PhysicalNode RAII | +3 |
+| C | OutputChannel + ProxyOutputChannel | +15 |
+| D | ActivePingStrategy pong round-trip; DeviceManager.accept_registrations | +8 |
+| E | AbstractExample toolchain (mocked pipeline) | +10 |
+| F | Example smoke tests (validate+transpile path) | +7 |
+| **Total** | | **+48** |
+
+Projected total: **624 + 48 = 672 tests**
+
+*(The previous estimate of 644 did not include Steps E and F.)*

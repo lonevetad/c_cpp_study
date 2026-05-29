@@ -135,7 +135,16 @@ template <typename AggregateProgram>
 class SwarmSimulator {
 public:
     SwarmSimulator(int num_nodes, int ipc_port = 0)
-        : num_nodes_(num_nodes), ipc_port_(ipc_port) {}
+        : num_nodes_(num_nodes), ipc_port_(ipc_port), ipc_server_(ipc_port) {
+        // Register standard IPC handlers.
+        // ping — liveness probe; no FCPP round is executed.
+        ipc_server_.register_handler("ping", [](const json& req) {
+            json resp;
+            resp["status"] = "pong";
+            resp["node_id"] = req.value("node_id", -1);
+            return resp;
+        });
+    }
 
     void run_step() {
         // Execute one round of the aggregate program
@@ -157,6 +166,7 @@ private:
     int ipc_port_;
     double current_time_ = 0.0;
     double dt_ = 0.1;
+    IpcServer ipc_server_;
 };
 
 }  // namespace fcpp_runtime

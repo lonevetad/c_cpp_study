@@ -1,0 +1,106 @@
+SESSION RECORD — 2026-05-28k
+Topic: V1_9_PLAN Step C — OutputChannel + DeviceManager integration
+Branch: bugfix/fcpp_bridge/it1
+Tests: 647 pass, 0 fail  (was 632; +15 new)
+
+═══════════════════════════════════════════════════════════════════════════
+SUMMARY OF WORK
+═══════════════════════════════════════════════════════════════════════════
+
+Created 5 new files implementing the OutputChannel hierarchy:
+
+  ipc/output_channel.py
+    ABC with send(name, payload), close() (no-op default), clone() (copy.copy).
+    Prototype pattern: clone() returns a shallow copy; subclasses override for
+    proper independence where needed.
+
+  ipc/logging_output_channel.py
+    LoggingOutputChannel(level, logger_name).
+    send() emits [name] payload via bridge logger at the configured level.
+    clone() reuses the same logger reference (loggers are singletons).
+
+  ipc/file_output_channel.py
+    FileOutputChannel(path_or_stream, format).
+    format="json" (default) → {"name":…,"payload":…}\n per send.
+    format="csv" → name,payload\n per send.
+    When given a path: owns the stream, closes it in close().
+    When given a stream: borrows it, clone() never owns.
+
+  ipc/callback_output_channel.py
+    CallbackOutputChannel(fn).
+    send() calls fn(name, payload). close() is a no-op. clone() wraps same fn.
+
+  ipc/proxy_output_channel.py
+    ProxyOutputChannel(mode="sequential"|"parallel").
+    add_channel(ch) → int  (channel ID for removal).
+    remove_channel(id)     (no-op if missing).
+    send() sequential: calls channels in registration order.
+    send() parallel:   ThreadPoolExecutor dispatches concurrently.
+    close() calls close() on all sub-channels.
+    clone() deep-copies sub-channels via ch.clone().
+
+Updated files:
+
+  ipc/__init__.py
+    Added imports + __all__ entries for all 5 new classes.
+
+  ipc/device_manager.py
+    __init__: added output_channel: Optional[OutputChannel] = None kwarg.
+    self._output = output_channel or LoggingOutputChannel() (default).
+    start_all(): failure → also calls self._output.send("start_all", {...}).
+    connect_all(): failure → also calls self._output.send("connect_all", {...}).
+    step_all(): failure → also calls self._output.send("step_all", {...}).
+    close_all(): failure → also calls self._output.send("close_all", {...}).
+
+  TESTS (+15 in tests/ipc/test_output_channel.py):
+    LoggingOutputChannel: send calls logger, clone shares logger
+    CallbackOutputChannel: invokes fn, clone uses same fn, close is noop
+    FileOutputChannel: json format, csv format, clone does not own stream
+    ProxyOutputChannel: sequential fan-out, parallel fan-out, remove_channel,
+                        invalid mode raises, clone independence
+    DeviceManager integration: accepts output_channel kwarg,
+                                start_all failure reaches output_channel
+
+  DOCS:
+    TUTORIAL_in_depth.md: new §11 "Multi-swarm output channels" (class hierarchy,
+      basic usage, parallel mode, Prototype clone, CallbackOutputChannel)
+    README.md: DeviceManager bullet updated + OutputChannel bullet added
+
+═══════════════════════════════════════════════════════════════════════════
+FILES CHANGED
+═══════════════════════════════════════════════════════════════════════════
+
+src/fcpp_bridge/ipc/output_channel.py          NEW
+src/fcpp_bridge/ipc/logging_output_channel.py  NEW
+src/fcpp_bridge/ipc/file_output_channel.py     NEW
+src/fcpp_bridge/ipc/callback_output_channel.py NEW
+src/fcpp_bridge/ipc/proxy_output_channel.py    NEW
+src/fcpp_bridge/ipc/__init__.py                +5 imports + __all__ entries
+src/fcpp_bridge/ipc/device_manager.py          output_channel kwarg + routing
+src/fcpp_bridge/tests/ipc/test_output_channel.py  NEW — 15 tests
+src/fcpp_bridge/TUTORIAL_in_depth.md           §11 added (renumbered §12 below)
+src/fcpp_bridge/README.md                      feature list updated
+
+═══════════════════════════════════════════════════════════════════════════
+NEXT: SESSION 2026-05-28l — STEP D EXECUTION
+═══════════════════════════════════════════════════════════════════════════
+
+Step D: Runtime and physical-device support
+
+  D.1  runtime_generator.py: add ping handler to C++ IPC server template
+       } else if (cmd == "ping") { ... response["status"] = "pong"; ... }
+       Update ActivePingStrategy docstring: remove "Requires C++ ping handler" warning.
+
+  D.2  device_manager.py: accept_registrations(port) + stop_accepting_registrations()
+       Daemon HTTP server thread (http.server); on receipt calls add_physical(...).
+       Payload schema: {"version": "1.0", "name": "...", "host": "...",
+                        "port": ..., "backend": "http"}
+       _registration_server_loop daemon thread.
+
+  Tests:
+    test_liveness_strategy.py: +3 (pong round-trip scenario)
+    test_device_manager.py: +5 (registration flow via urllib.request.urlopen)
+
+  Docs:
+    TUTORIAL_in_depth.md: §"Self-registering physical devices"
+    README.md: accept_registrations bullet

@@ -247,6 +247,107 @@ Total: 624 tests — 624 pass, 0 fail.
 
 ---
 
+## v2.1 — AbstractExample toolchain bridge (2026-05-28, v1.9 Step E)
+
+`AbstractExample.run()` now invokes the **full toolchain** instead of a pure-Python
+simulation.  The `@aggregate_function` class is the actual running algorithm.
+
+### Interface changes
+
+**Removed abstract methods:**
+- `round_step(round_num, positions, states)` — algorithm runs in C++ now
+- `initial_states(positions)` — C++ binary owns initial state
+
+**Added abstract property:**
+- `aggregate_class` — the `@aggregate_function` class to validate, transpile, and run
+
+**Added optional properties (with defaults):**
+- `build_dir` — cache dir for compiled binaries (`examples/.fcpp_build/`)
+- `cpp_dir` — dir for transpiled C++ source (`examples/.fcpp_cpp/`)
+
+**Updated hook signature:**
+- `on_round_complete(round_num, snapshot: Optional[SwarmSnapshot])` — receives a
+  `SwarmSnapshot` from the C++ binary instead of Python-computed position/state dicts
+
+**`log_header` / `log_line`:** same signatures; `state_data` is now `Any` from
+`NodeState.state_data` (dict/JSON from the FCPP binary) instead of a Python dataclass.
+
+### SwarmProcess.latest_snapshot()
+
+New method added to `ipc/swarm_process.py`.  Returns the snapshot from the most
+recent `_dispatch_update` call, or `None` before the first step.  Used by `run()`
+to pass the current snapshot to `on_round_complete`.
+
+### Tests
+
++10 new tests in `tests/examples/test_abstract_example.py` (mocked pipeline).
+Total: **665 tests — 665 pass, 0 fail**.
+
+### Step F dependency
+
+Step F migrates the 7 concrete example subclasses to the new interface
+(removing `round_step`, `initial_states`, pure-Python helpers; adding `aggregate_class`).
+
+---
+
+## v2.2 — Examples subclasses migration to toolchain path (2026-05-28, v1.9 Step F)
+
+All 7 concrete `AbstractExample` subclasses migrated to the new toolchain interface
+introduced in v2.1.
+
+### Per-example changes
+
+| Example | Removed | Added / Updated | compute() change |
+|---|---|---|---|
+| `spreading_collection.py` | `initial_states`, `round_step`; `math`, `neighbors_of` imports | `aggregate_class`; `state_data: Any` log methods; `on_round_complete(snap)` | step 2: `self_uid() == SOURCE_ID`; `float('inf')` in dataclass |
+| `chain_decaying.py` | `_is_source_node`, `_chain_update`, `initial_states`, `round_step`; `math`, `neighbors_of` imports | `aggregate_class`; dict-access log methods; `on_round_complete(snap)` storing `_last_snapshot`; `on_simulation_end` uses snapshot | step 1: `self_uid() % 17 == 0` |
+| `channel_broadcast.py` | `_bis_distance`, `initial_states`, `round_step`; `neighbors_of` import | `aggregate_class`; dict-access log methods | steps 2–3: `self_uid() == 0 / 1`; step 5: same |
+| `collection_compare.py` | `initial_states`, `round_step`; `neighbors_of` import | `aggregate_class`; `old()` round counter; dict-access log methods | step 2: `old(0, t+1)` counter + source switch via `self_uid()` |
+| `message_dispatch.py` | `_bis_distance_msg`, `initial_states`, `round_step`; `neighbors_of` import | `aggregate_class`; `old()` round counter; dict-access log methods | step 2: `self_uid() == 0`; step 5: `old()` counter + conditional `new_msg` injection |
+| `worker_role_assignment.py` | `_bis_distance_worker`, `initial_states`, `round_step`; `neighbors_of` import | `aggregate_class`; dict-access log methods; `on_round_complete` writes receiver log from snapshot | — (compute unchanged) |
+| `communication_roles_assignment.py` | `_bis_dist_comm`, `initial_states`, `round_step`; `_bis_dist_comm` import removed | `aggregate_class`; dict-access log methods; `on_round_complete` writes receiver log from snapshot | — (compute unchanged) |
+
+### Receiver log format change
+
+`worker_role_assignment.py` and `communication_roles_assignment.py` previously wrote
+detailed per-message delivery entries inside `round_step()`.  In the toolchain path,
+per-message data is not available from the C++ IPC snapshot.  The receiver log format
+is simplified to a per-round summary:
+
+- `receiver_messages.log`: `round,receiver_node,received_count`
+- `comm_receiver_messages.log`: `round,receiver_nid,received_log_size`
+
+### Role assignment in toolchain mode
+
+`CommunicationRolesExample` and `WorkerRoleExample` previously called `_setup_network()`
+and `initial_states()` to inject Python-computed roles into the C++ binary.  Since
+`initial_states()` is removed from the interface, the C++ binary uses `initial_state()`
+from the aggregate class (UNASSIGNED / default role 0) for all nodes.  Role-specific
+behaviour will only execute correctly once role injection is added to the IPC protocol
+(planned future work).
+
+### `old()` counter additions
+
+`collection_compare.py` and `message_dispatch.py` received `old(0, lambda t: t+1)` round
+counters in `compute()` to replace Python-side round tracking:
+
+- `collection_compare`: source switches from `self_uid()==0` to `self_uid()==1` when
+  `round_tick >= SOURCE_SWITCH (250)`.
+- `message_dispatch`: non-source nodes inject a new message every 10 rounds during
+  `round_tick` in `[MSG_START=10, MSG_END=50]`.
+
+### Smoke tests
+
+`tests/examples/test_examples_smoke.py` — 7 new tests (one per aggregate class):
+`validate` + `transpile` path, no C++ compiler required.
+
+### Tests
+
++7 smoke tests in `tests/examples/test_examples_smoke.py`.
+Total: **672 tests — 672 pass, 0 fail**.
+
+---
+
 ## Resume instructions
 
 If interrupted, check the **Status** table above. Find the first ⬜ Pending row and

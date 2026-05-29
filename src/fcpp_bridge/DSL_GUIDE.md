@@ -646,6 +646,24 @@ automatically.  For example, using `min_hood` adds
 
 ## 10. Complete Examples
 
+### Running examples
+
+Every example in `examples/` is an `AbstractExample` subclass.  Calling
+`example.run(num_rounds)` runs the full toolchain automatically:
+
+1. `AggregateValidator.validate(self.aggregate_class)` — checks DSL constraints
+2. `Transpiler(self.aggregate_class).generate()` — produces C++ source
+3. `Compiler.get_or_compile(cpp_code, name)` — compiles (SHA-256 cached)
+4. `SwarmProcess.start()` — spawns the compiled binary
+5. Rounds loop: `step()` → `_on_snapshot()` writes log lines → `on_round_complete()`
+6. `swarm.close()` then `on_simulation_end()`
+
+Subclasses must implement: `aggregate_class`, `log_prefix`, `initial_positions()`,
+`log_header()`, `log_line()`.
+
+Optional hooks: `on_simulation_start()`, `on_simulation_end()`,
+`on_round_complete(round_num, snapshot: SwarmSnapshot)`.
+
 ### Example A — Hop-count distance from a source
 
 ```python

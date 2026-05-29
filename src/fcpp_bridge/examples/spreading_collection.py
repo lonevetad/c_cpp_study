@@ -7,7 +7,7 @@ Original C++ source:
 
 Algorithm (same order as C++ MAIN):
     1. rectangle_walk  — nodes move randomly within the 3D deployment area
-    2. select_source   — one node is the source (rotates in C++; static here)
+    2. select_source   — one node is the source (SOURCE_ID = node 0)
     3. abf_distance    — Adaptive Bellman-Ford distance from the source
     4. mp_collection   — collect the network diameter back toward the source
     5. broadcast       — disseminate the diameter from source to the whole network
@@ -16,20 +16,18 @@ Log files:
     Per-node logs written to examples/logs/node_<id>_spreading_collection.log
     Each line: round, is_source, calc_distance, source_diameter, diameter
 
-Differences from original C++:
-    - Source selection: original rotates the source ID every 50 simulated seconds
-      (using node.current_time()); this port uses a static source (node 0).
-    - Demo simulation: runs a pure-Python approximation of the algorithm since the
-      full C++ compilation pipeline requires FCPP headers and a C++ toolchain.
+Running:
+    SpreadingCollectionExample().run(NUM_ROUNDS) invokes the full toolchain:
+    validate → transpile → compile → SwarmProcess → per-node logs.
+    A C++ compiler and FCPP headers are required.
 """
 
-import math
 import random
 from dataclasses import dataclass
+from typing import Any
 
 from fcpp_bridge.python_dsl import aggregate_function, Neighborhood
 from fcpp_bridge.examples._example_utils import (
-    neighbors_of,
     report_validation,
     report_transpilation,
 )
@@ -64,7 +62,7 @@ class SpreadingState:
         diameter        (float)  — diameter broadcast to all nodes via broadcast
     """
     is_source: bool = False
-    calc_distance: float = math.inf
+    calc_distance: float = float('inf')
     source_diameter: float = 0.0
     diameter: float = 0.0
 
@@ -118,8 +116,8 @@ class SpreadingCollectionAggregate:
         )
 
         # ── Step 2: source selection ──────────────────────────────────────────
-        # C++ select_source(CALL, 50) checks node.current_time(); we use the state flag.
-        is_source = self_state.is_source
+        # C++: is_source = (node.uid == SOURCE_ID); self_uid() → node.uid
+        is_source = self_uid() == SOURCE_ID  # noqa: F821
 
         # ── Step 3: Adaptive Bellman-Ford distance from the source ────────────
         # C++: double dist = abf_distance(CALL, is_source);
@@ -151,22 +149,22 @@ class SpreadingCollectionAggregate:
 
 
 # ---------------------------------------------------------------------------
-# Demo simulation — AbstractExample subclass
+# AbstractExample subclass — toolchain bridge
 # ---------------------------------------------------------------------------
 
 class SpreadingCollectionExample(AbstractExample):
-    """Pure-Python approximation of the spreading-collection algorithm.
+    """Runs SpreadingCollectionAggregate through the full toolchain.
 
-    Implements the same 5 steps as compute() using Python logic so that
-    per-node log files can be produced without a C++ compiler.
-    The topology is a random spatial deployment with fixed-radius connectivity.
-
-    Nodes are stored as dict[int, SpreadingState]; the initial set is
-    range(NUM_NODES) but nodes may join or leave between rounds.
+    Validates, transpiles, compiles (SHA-256 cached), and runs the C++ binary.
+    State updates arrive via IPC; per-node log files are written from snapshots.
     """
 
     def __init__(self, seed: int = 42):
         self._rng = random.Random(seed)
+
+    @property
+    def aggregate_class(self):
+        return SpreadingCollectionAggregate
 
     @property
     def log_prefix(self) -> str:
@@ -178,81 +176,24 @@ class SpreadingCollectionExample(AbstractExample):
             for i in range(NUM_NODES)
         }
 
-    def initial_states(self, positions: dict) -> dict:
-        return {
-            nid: SpreadingState(is_source=(nid == SOURCE_ID))
-            for nid in positions
-        }
-
-    def round_step(self, round_num: int, positions: dict, states: dict) -> tuple:
-        new_positions = {}
-        new_states = {}
-
-        for nid, (x, y) in positions.items():
-            # ── Step 1: rectangle_walk (move node) ───────────────────────
-            new_positions[nid] = (
-                max(0.0, min(SIDE, x + self._rng.uniform(-SPEED, SPEED))),
-                max(0.0, min(SIDE, y + self._rng.uniform(-SPEED, SPEED))),
-            )
-
-        for nid in positions:
-            s = states[nid]
-            nbr_s = [states[n] for n in neighbors_of(positions, nid, COMM)]
-
-            # ── Step 2: is_source ─────────────────────────────────────────
-            is_source = s.is_source
-
-            # ── Step 3: abf_distance ──────────────────────────────────────
-            if is_source:
-                dist = 0.0
-            elif nbr_s:
-                dist = min(ns.calc_distance for ns in nbr_s) + COMM * 0.05
-            else:
-                dist = math.inf
-
-            # ── Step 4: mp_collection (max distance toward source) ────────
-            if is_source:
-                child_vals = [
-                    ns.calc_distance for ns in nbr_s
-                    if math.isfinite(ns.calc_distance)
-                ]
-                sdiam = max(child_vals, default=0.0)
-            else:
-                parents = [ns for ns in nbr_s if ns.calc_distance < dist]
-                sdiam = max((ns.source_diameter for ns in parents), default=0.0)
-
-            # ── Step 5: broadcast (diameter from source to all) ───────────
-            if is_source:
-                diam = sdiam
-            else:
-                parent_pairs = [(ns.calc_distance, ns.diameter) for ns in nbr_s
-                                if ns.calc_distance < dist]
-                if parent_pairs:
-                    diam = min(parent_pairs, key=lambda t: t[0])[1]
-                else:
-                    diam = s.diameter   # retain last known
-
-            new_states[nid] = SpreadingState(
-                is_source=is_source,
-                calc_distance=dist,
-                source_diameter=sdiam,
-                diameter=diam,
-            )
-
-        return new_positions, new_states
-
-    def log_header(self, node_id: int, state) -> str:
+    def log_header(self, node_id: int, state_data: Any) -> str:
+        # state_data is a dict from C++ IPC JSON when running via toolchain.
         return (
             f"# SpreadingCollection — node {node_id}\n"
             "# round,is_source,calc_distance,source_diameter,diameter\n"
         )
 
-    def log_line(self, round_num: int, node_id: int, state) -> str:
+    def log_line(self, round_num: int, node_id: int, state_data: Any) -> str:
+        # state_data is a dict from C++ IPC JSON; keys match SpreadingState fields.
+        d = state_data if isinstance(state_data, dict) else vars(state_data)
         return (
-            f"{round_num},{int(state.is_source)},"
-            f"{state.calc_distance:.4f},{state.source_diameter:.4f},"
-            f"{state.diameter:.4f}\n"
+            f"{round_num},{int(d.get('is_source', 0))},"
+            f"{d.get('calc_distance', 0.0):.4f},{d.get('source_diameter', 0.0):.4f},"
+            f"{d.get('diameter', 0.0):.4f}\n"
         )
+
+    def on_round_complete(self, round_num: int, snapshot) -> None:
+        self._last_snapshot = snapshot
 
     def on_simulation_end(self) -> None:
         print(f"    Wrote {NUM_NODES} log files → {self.log_dir}/")

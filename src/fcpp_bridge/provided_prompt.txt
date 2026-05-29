@@ -373,3 +373,47 @@ Update the already existing "1.9 plan" by merging the already present steps with
 Reorder the resulting "1.9 plan" steps to optimize the overall refactoring, by eventually merging or splitting the steps.
 Note: every step must also update all related ".md" files, even write new ones if necessary, and save both Your (ClaudeCode) memory and session data, to allow the session to be preciselu resumed if interrupted. 
 
+
+
+
+
+
+I need to correct You (Claude Code) about the "session save": while it's still a highly valuable and interesting feature, I was originally referring to "the session of this conversation with Claude Code, which should be able to be resumed at any time.
+
+Keep the "v1.9" plan as the new updated version (i.e., as it appears in current file; read it again if necessary or to refresh Your memory) and execute , but also save the "session of the conversation and tasks progression of Claude Code, other than updating the relevant .md files" between each sub-step.
+
+All edits and command line instructions/executions are allowed IF AND ONLY IF the only affected files lies under the folder "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src". Never download a file, establish a connection via Internet or execute a "curl" command without my (the Developer) explicit consent: ask me the consent and, in the meantime, execute asynchronously all other tasks and sub-steps that are not dependent to that consent request.
+
+Update Your memory afterwards and update all relevant ",md" files after each major step.
+
+
+
+
+
+Check if the "TUTORIALS" (remember: the "simple" is meant to show a simplified version of the "fcpp_bridge" library usage and it's aimed for those who begins to learn the basics of this library, while the "in_deep" is meant for production-scenario, where expert developers tweaks the configurations [like complex outputs, complex updates consumers and complex logging system, as well as heterogeneous implementations of physical nodes like parallel and asynchronously executed instances of the library / the original FCPP library communicating with the "fcpp_bridge" one) are updated with the last "v1_9" refactoring, then update them as necessary.
+
+
+
+
+
+
+Inside the folder "exercises", define a folder named "ex_utils" which will contain some shared utilities, like initialization functions.
+Create a "position.py" file whose functions sets the position of all nodes in a network somehow. The function "rnd_in_area" sets the positions in a random point within a given area. Other functions might be defined.
+
+Create a "storage.py" file whose functions sets the value of a specific variable of the nodes' storage. Those functions might need to check the nodes' storage types in order to produce the matching values.
+One function is "rnd_vec" which creates random vector of a given length whose values are drawn randomly from a given interval. Similarly, a function setting vectors of random length (the length is bound by another given range).
+
+Another function for the "storage" is "spread_data_coprime_ID", with the following algorithm: for each node, get its neighbors's IDs and filter out the IDs that are not coprime with current node's ID. The resulting array is the value stored in current node's storage (in the given storage's field).
+An alternative version of the function "spread_data_coprime_ID" is "spread_data_coprime_ID_pos", whose only difference is the data it saves in the storage: not a vector of IDs, but a map with those IDs as keys and he related node's position (this is a dummy value, a placeholder) is the value.
+
+
+
+
+The "spread_data_coprime_ID_pos" will be used for future exercises, one built upon the previous one. This group of exercise will incrementally create lots of solutions and tools; the basic ideas are the following:
+1) "scattered_database": it emulates "sharded, distributed, mirrored and replicated databases" and a global "pool of knowledge", but whose pieces/shards are scattered (and replicated) across all nodes' storages (multiple copies of the shards are), in which a node might need to retrieve some information stored in some other node's storage. A node, after a while, requires a data it doesn't have (like, an ID [and the related node's position] that is not present in its storage and it's different by its own ID), then node having the required data send it (somehow, maybe using a spawn and across a backward "bis" or "channel_broadcast") to the "requesting node".
+2) "area discovery": an area (which is a rectangle or a non-self-intersecting polygon, depending the versions of the example) gets divided into a grid of tiles of squares (if the tile is internal of the area) or polygons (if the tile is at the border), and the tiles get scanned by the nodes; the nodes saves the tiles' shape as values of "scattered_database", while the tile's center is the key (all tiles' centers are "snapped" and aligned to the grid, whose dimension and granularity are known at configuration/initialization time). The simples version of the related exercise puts a node node inside a tile, the area is rectangular and there are an amount of nodes equal to or greater to the number of tiles (and the nodes save in the storage the data of their closest tile's center and the data of their neighbors's closest tile's center [so, the nodes "nbr" just their "personal tile" 's center and save the received tiles' center; they never share the entirety of the map]).
+3) "iteratively_area_discovery": it's similar to the previous one, but the area might be a non-self-intersecting polygon (or not) and the tiles amounts are greater than the nodes count. So, the nodes must elect the nodes who has to "explore" a tile (the dummy implementation of "exploring a tile" is just sitting still next to its center for a configurable amount of ticks, like 7), while the other nodes has to move towards the "unassigned" tiles. "Moving" should be slow, slow enough that the nodes can also "scatter" the knowledge of the "assigned tiles" in order to not double-assign a tile. (Nodes store separately "the first tile ever assigned to them" and might "scatter" that "first ever tile assigned" with their neighbors. This way, every node can always check if a tile is assigned or not: by knowing the network size (in terms of hops), a node should receive a reply within a number of ticks that is more or less "twice the size of the network" [the back-and-forth of the request and the reply back], so not-receiving a response within than amount of ticks should imply that the interested tile is not assigned. If a node has not a tile assigned but it's not "discovering" it, then it should move towards that tile's center.
+Write a detailed plan for each functionality and for each exercise about their implementations.
+
+Then, update all relevant ".md" files, write a new entry on the "development_history" folder and save your memory.
+

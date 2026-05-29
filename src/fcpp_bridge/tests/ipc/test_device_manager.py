@@ -216,3 +216,105 @@ def test_device_manager_device_count_includes_both_types(tmp_path):
     mgr.add_simulation("sim", _dummy_binary(tmp_path))
     mgr.add_physical("r1", "192.168.1.1", 8080)
     assert mgr.device_count == 2
+
+
+# ── Step D — accept_registrations ────────────────────────────────────────────
+
+
+def _post_register(port: int, payload: dict) -> tuple:
+    """POST JSON to /register on localhost:port. Returns (status_code, body_dict)."""
+    import urllib.request
+    import json
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        f"http://localhost:{port}/register",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return e.code, {}
+
+
+def test_accept_registrations_adds_device():
+    """Valid POST /register adds the device to the manager."""
+    import time
+    mgr = DeviceManager()
+    mgr.accept_registrations(port=19876)
+    time.sleep(0.1)
+    try:
+        status, body = _post_register(19876, {
+            "version": "1.0", "name": "drone-1",
+            "host": "127.0.0.1", "port": 8080, "backend": "http",
+        })
+        assert status == 200
+        assert body.get("status") == "ok"
+        assert "drone-1" in mgr.device_names
+    finally:
+        mgr.stop_accepting_registrations()
+
+
+def test_accept_registrations_invalid_json_returns_400():
+    """POST with missing required fields returns 400."""
+    import time
+    mgr = DeviceManager()
+    mgr.accept_registrations(port=19877)
+    time.sleep(0.1)
+    try:
+        status, _ = _post_register(19877, {"incomplete": "payload"})
+        assert status == 400
+    finally:
+        mgr.stop_accepting_registrations()
+
+
+def test_accept_registrations_wrong_path_returns_404():
+    """POST to a path other than /register returns 404."""
+    import time, urllib.request, urllib.error
+    mgr = DeviceManager()
+    mgr.accept_registrations(port=19878)
+    time.sleep(0.1)
+    try:
+        req = urllib.request.Request(
+            "http://localhost:19878/other",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=2)
+            assert False, "Expected 404"
+        except urllib.error.HTTPError as e:
+            assert e.code == 404
+    finally:
+        mgr.stop_accepting_registrations()
+
+
+def test_accept_registrations_calls_on_registered_callback():
+    """on_registered callback fires with (name, node) on valid registration."""
+    import time
+    registered = []
+    mgr = DeviceManager()
+    mgr.accept_registrations(port=19879, on_registered=lambda n, node: registered.append(n))
+    time.sleep(0.1)
+    try:
+        _post_register(19879, {
+            "version": "1.0", "name": "sensor-1",
+            "host": "127.0.0.1", "port": 9090, "backend": "http",
+        })
+        time.sleep(0.05)
+        assert "sensor-1" in registered
+    finally:
+        mgr.stop_accepting_registrations()
+
+
+def test_stop_accepting_registrations_clears_thread():
+    """After stop, _registration_thread is None."""
+    import time
+    mgr = DeviceManager()
+    mgr.accept_registrations(port=19880)
+    time.sleep(0.05)
+    mgr.stop_accepting_registrations()
+    assert mgr._registration_thread is None

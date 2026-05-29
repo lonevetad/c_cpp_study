@@ -28,25 +28,24 @@ Log files:
     Per-node logs written to examples/logs/node_<id>_chain_decaying.log
     Each line: round, is_source, in_channel, should_hold, hops, ttl, next_uid
 
+Running:
+    ChainDecayingExample().run(NUM_ROUNDS) invokes the full toolchain:
+    validate → transpile → compile → SwarmProcess → per-node logs.
+    A C++ compiler and FCPP headers are required.
+
 Differences from original C++:
-    - is_source: C++ uses node.uid (node API); Python port carries is_source in
-      state, initialized with (uid % 17 == 0) before the simulation starts.
     - Deployment: C++ runner configures SIDE, COMM, SPEED externally;
       this port defines them as module constants (see below).
-    - Python DSL compute(): nbr is called with a simplified lambda showing
-      min_hood; the full update logic (am_I_closest, has_to_increment, decay
-      check) is faithfully implemented in ChainDecayingExample.round_step().
     - was_on_chain is always True in C++ MAIN (passed as literal true);
       this port omits it since it adds no algorithmic content.
 """
 
-import math
 import random
 from dataclasses import dataclass
+from typing import Any
 
 from fcpp_bridge.python_dsl import aggregate_function, Neighborhood
 from fcpp_bridge.examples._example_utils import (
-    neighbors_of,
     report_validation,
     report_transpilation,
 )
@@ -124,7 +123,8 @@ class ChainDecayingAggregate:
           3. in_channel = data.ttl > error_ttl
         """
         # ── Step 1: source determination ──────────────────────────────────────
-        is_source = self_state.is_source
+        # C++: bool is_source = (node.uid % 17 == 0);
+        is_source = (self_uid() % 17 == 0)  # noqa: F821
 
         # ── Step 2: nbr with decaying-chain update lambda ─────────────────────
         data = nbr(  # noqa: F821
@@ -146,78 +146,23 @@ class ChainDecayingAggregate:
 
 
 # ---------------------------------------------------------------------------
-# Demo simulation — AbstractExample subclass
+# AbstractExample subclass — toolchain bridge
 # ---------------------------------------------------------------------------
 
-def _is_source_node(uid: int) -> bool:
-    return uid % 17 == 0
-
-
-def _chain_update(
-    nid: int,
-    is_src: bool,
-    nbrs: list,
-    states: dict,
-) -> tuple:
-    """
-    Apply the is_alive_decaying update for one node.
-
-    Mirrors the C++ lambda passed to nbr:
-        myself = self(d, node.uid)
-        n      = min_hood(d)           — minimum tuple across self + neighbors
-        if extremity: return (False, 0, 0, uid)
-        am_I_closest = (n == myself)
-        has_to_increment = am_I_closest OR get<0>(n)
-        if has_to_increment: increment hops (if not am_I_closest), increment TTL
-        if TTL >= threshold: return decayed
-        get<0>(n) = (get<1>(n) > 0) AND get<0>(n)
-        return n
-    """
-    if is_src:
-        return (False, 0, 0, nid)
-
-    s = states[nid]
-    myself = (s.should_hold, s.hops, s.ttl, s.next_uid)
-
-    field_values = [myself] + [
-        (states[n].should_hold, states[n].hops, states[n].ttl, states[n].next_uid)
-        for n in nbrs
-    ]
-    n = list(min(field_values))
-
-    am_I_closest = (tuple(n) == myself)
-    has_to_increment = am_I_closest or n[0]
-
-    if has_to_increment:
-        if not am_I_closest:
-            n[1] += 1
-        n[2] += METRIC_HOP
-
-    if n[2] >= TTL_THRESHOLD:
-        return (False, INF_INT, ERROR_TTL, nid)
-
-    n[0] = (n[1] > 0) and n[0]
-    return tuple(n)
-
-
 class ChainDecayingExample(AbstractExample):
-    """Pure-Python faithful implementation of chain_decaying.hpp.
+    """Runs ChainDecayingAggregate through the full toolchain.
 
-    Implements the full is_alive_decaying logic including:
-        - min_hood over the 4-tuple field to find the best path to an extremity
-        - am_I_closest detection (isolated node)
-        - has_to_increment flag propagation
-        - TTL increment with unitary-hop metric
-        - Decay detection (TTL >= threshold)
-        - should_hold propagation (only hold if hops > 0)
-
-    Nodes are stored as dict[int, ChainDecayingState]; the initial set is
-    range(NUM_NODES) but nodes may join or leave between rounds.
+    Validates, transpiles, compiles (SHA-256 cached), and runs the C++ binary.
+    State updates arrive via IPC; per-node log files are written from snapshots.
     """
 
     def __init__(self, seed: int = 31):
         self._rng = random.Random(seed)
-        self._final_states: dict = {}
+        self._last_snapshot = None
+
+    @property
+    def aggregate_class(self):
+        return ChainDecayingAggregate
 
     @property
     def log_prefix(self) -> str:
@@ -229,63 +174,44 @@ class ChainDecayingExample(AbstractExample):
             for i in range(NUM_NODES)
         }
 
-    def initial_states(self, positions: dict) -> dict:
-        result = {}
-        for nid in positions:
-            is_src = _is_source_node(nid)
-            result[nid] = ChainDecayingState(
-                is_source=is_src,
-                in_channel=is_src,
-                should_hold=not is_src,
-                hops=0 if is_src else INF_INT,
-                ttl=0 if is_src else ERROR_TTL,
-                next_uid=nid,
-            )
-        return result
-
-    def round_step(self, round_num: int, positions: dict, states: dict) -> tuple:
-        new_positions = {}
-        new_states = {}
-
-        for nid, (x, y) in positions.items():
-            new_positions[nid] = (
-                max(0.0, min(SIDE, x + self._rng.uniform(-SPEED, SPEED))),
-                max(0.0, min(SIDE, y + self._rng.uniform(-SPEED, SPEED))),
-            )
-
-        for nid in positions:
-            nbrs = neighbors_of(positions, nid, COMM)
-            is_src = _is_source_node(nid)
-            d = _chain_update(nid, is_src, nbrs, states)
-            in_chan = d[2] > ERROR_TTL
-            new_states[nid] = ChainDecayingState(
-                is_source=is_src,
-                in_channel=in_chan,
-                should_hold=d[0],
-                hops=d[1],
-                ttl=d[2],
-                next_uid=d[3],
-            )
-
-        return new_positions, new_states
-
-    def log_header(self, node_id: int, state) -> str:
+    def log_header(self, node_id: int, state_data: Any) -> str:
         return (
-            f"# ChainDecaying — node {node_id}  (is_source={state.is_source})\n"
+            f"# ChainDecaying — node {node_id}\n"
             "# round,is_source,in_channel,should_hold,hops,ttl,next_uid\n"
         )
 
-    def log_line(self, round_num: int, node_id: int, state) -> str:
+    def log_line(self, round_num: int, node_id: int, state_data: Any) -> str:
+        d = state_data if isinstance(state_data, dict) else vars(state_data)
         return (
-            f"{round_num},{int(state.is_source)},{int(state.in_channel)},"
-            f"{int(state.should_hold)},{state.hops},{state.ttl},{state.next_uid}\n"
+            f"{round_num},{int(d.get('is_source', False))},"
+            f"{int(d.get('in_channel', False))},"
+            f"{int(d.get('should_hold', True))},"
+            f"{d.get('hops', INF_INT)},{d.get('ttl', ERROR_TTL)},"
+            f"{d.get('next_uid', 0)}\n"
         )
 
-    def on_round_complete(self, round_num: int, positions: dict, states: dict) -> None:
-        self._final_states = states
+    def on_round_complete(self, round_num: int, snapshot) -> None:
+        self._last_snapshot = snapshot
 
     def on_simulation_end(self) -> None:
-        pass
+        print(f"    Wrote {NUM_NODES} log files → {self.log_dir}/")
+        snap = self._last_snapshot
+        if snap and snap.nodes:
+            src_nodes = sorted(
+                ns.node_id for ns in snap.nodes
+                if (ns.state_data.get('is_source', False)
+                    if isinstance(ns.state_data, dict)
+                    else getattr(ns.state_data, 'is_source', False))
+            )
+            alive_nodes = sorted(
+                ns.node_id for ns in snap.nodes
+                if (ns.state_data.get('in_channel', False)
+                    if isinstance(ns.state_data, dict)
+                    else getattr(ns.state_data, 'in_channel', False))
+            )
+            print(f"    Source (extremity) nodes: {src_nodes}")
+            print(f"    Nodes in chain after {NUM_ROUNDS} rounds: "
+                  f"{len(alive_nodes)}/{NUM_NODES} → {alive_nodes}")
 
 
 # ---------------------------------------------------------------------------
@@ -312,16 +238,7 @@ def main() -> None:
     print(f"    Nodes: {NUM_NODES}  |  Rounds: {NUM_ROUNDS}  |  COMM: {COMM}")
     print(f"    Source criterion: uid % 17 == 0  |  TTL threshold: {TTL_THRESHOLD}")
 
-    example = ChainDecayingExample()
-    example.run(NUM_ROUNDS)
-
-    states = example._final_states
-    src_nodes = sorted(nid for nid, s in states.items() if s.is_source)
-    alive_nodes = sorted(nid for nid, s in states.items() if s.in_channel)
-    print(f"    Wrote {NUM_NODES} log files → {example.log_dir}/")
-    print(f"    Source (extremity) nodes: {src_nodes}")
-    print(f"    Nodes in chain after {NUM_ROUNDS} rounds: "
-          f"{len(alive_nodes)}/{NUM_NODES} → {alive_nodes}")
+    ChainDecayingExample().run(NUM_ROUNDS)
 
     print("\nAlgorithm summary:")
     print("  Chain extremity nodes: uid % 17 == 0 — continuously refresh TTL to 0.")

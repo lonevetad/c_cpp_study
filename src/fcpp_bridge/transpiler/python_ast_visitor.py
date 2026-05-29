@@ -74,6 +74,27 @@ class PythonAstVisitor(ast.NodeVisitor):
         """Translate function calls (positional and keyword arguments)."""
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
+
+            # frozenset({x, y}) → set_t{x, y};  frozenset() → set_t{}
+            # Must be checked before generic arg-visiting (inner Set literal has no visitor).
+            if func_name == "frozenset":
+                if node.args and isinstance(node.args[0], ast.Set):
+                    elems = [self.visit(e) for e in node.args[0].elts]
+                    return f"set_t{{{', '.join(elems)}}}" if elems else "set_t{}"
+                return "set_t{}"
+
+            # min_hood/max_hood with a single Tuple arg → std::make_tuple(...)
+            # Avoids the C++ comma-expression pitfall: (a, b) evaluates to b.
+            # Note: callers that use a component of the result still need
+            # std::get<N>(tup) manually — that extraction cannot be automated
+            # without type inference.
+            if func_name in ("min_hood", "max_hood") and len(node.args) == 1:
+                if isinstance(node.args[0], ast.Tuple):
+                    elems = [self.visit(e) for e in node.args[0].elts]
+                    if func_name not in self.used_primitives:
+                        self.used_primitives.append(func_name)
+                    return f"{func_name}(CALL, std::make_tuple({', '.join(elems)}))"
+
             args = [self.visit(arg) for arg in node.args]
             # keyword args: emit values positionally (keyword names are discarded)
             args += [self.visit(kw.value)

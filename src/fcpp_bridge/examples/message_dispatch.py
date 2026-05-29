@@ -23,11 +23,17 @@ Log files:
     Each line: round, is_source, center_dist, routing_set_size,
                                received_count, active_procs
 
+Running:
+    MessageDispatchExample().run(NUM_ROUNDS) invokes the full toolchain:
+    validate → transpile → compile → SwarmProcess → per-node logs.
+    A C++ compiler and FCPP headers are required.
+
 Differences from original C++:
     - Devices: C++ uses 300; this port uses 30 for manageable log output.
     - Message injection: C++ generates random messages during simulated time [10..50]
       using node.current_time() and node.next_real()/next_int().
-      Python demo uses round numbers 10..50 directly (1 round ≈ 1 time unit).
+      This port uses an old() round counter; non-source nodes inject one message
+      every 10 rounds during rounds 10..50 (deterministic approximation).
     - node.nbr_uid(): used in spanning-tree construction; the nbr(ds) field in the
       Python DSL uses 0 as a placeholder UID since node.nbr_uid() is C++ API.
     - status enum: C++ uses status::internal/border/terminated_output (enum class);
@@ -39,10 +45,10 @@ Differences from original C++:
 import math
 import random
 from dataclasses import dataclass, field
+from typing import Any
 
 from fcpp_bridge.python_dsl import aggregate_function, Neighborhood
 from fcpp_bridge.examples._example_utils import (
-    neighbors_of,
     SPAWN_STATUS_BORDER,
     SPAWN_STATUS_INTERNAL,
     SPAWN_STATUS_TERMINATED,
@@ -61,6 +67,9 @@ SIDE = int(math.isqrt(DEVICES * 3000)) + 1  # deployment area side ≈ sqrt(devi
 HEIGHT = 100        # deployment area height
 SPEED = 10          # movement speed per round
 NUM_ROUNDS = 60     # simulation rounds (C++ runs ~100 time units of simulation)
+MSG_START = 10      # first round for message injection
+MSG_END = 50        # last round for message injection
+MSG_INTERVAL = 10   # inject one message per node every MSG_INTERVAL rounds
 
 # Status codes — aliases of the shared SPAWN_STATUS_* constants from _example_utils
 STATUS_BORDER = SPAWN_STATUS_BORDER          # node not in routing path
@@ -114,9 +123,9 @@ class MessageDispatchAggregate:
         bis_distance(...)     → bis_distance(CALL, ...)     [spreading.hpp]
         nbr(...)              → nbr(CALL, ...)              [basics.hpp]
         min_hood(...)         → min_hood(CALL, ...)         [basics.hpp]
+        old(...)              → old(CALL, ...)              [basics.hpp]
         sp_collection(...)    → sp_collection(CALL, ...)    [collection.hpp]
         spawn(...)            → spawn(CALL, ...)            [utils/aggregates.hpp]
-        old(...)              → old(CALL, ...)              [basics.hpp]
     """
 
     def initial_state(self) -> MessageDispatchState:
@@ -133,7 +142,7 @@ class MessageDispatchAggregate:
           2. bis_distance    — gradient from source (device 0)
           3. min_hood + nbr  — spanning-tree parent (nearest-to-source neighbor)
           4. sp_collection   — subtree routing sets (node UIDs below each node)
-          5. spawn           — one aggregate process per in-flight message
+          5. old + spawn     — round counter, message injection, process dispatch
           6. old             — persist map of received messages
         """
         # ── Step 1: random walk in 3D box ─────────────────────────────────────
@@ -147,7 +156,7 @@ class MessageDispatchAggregate:
 
         # ── Step 2: BIS distance from source ─────────────────────────────────
         # C++: double ds = bis_distance(CALL, is_src, 1, 100);
-        is_src = self_state.is_source
+        is_src = (self_uid() == 0)  # noqa: F821
         ds = bis_distance(is_src, 1, 100)  # noqa: F821
 
         # ── Step 3: spanning-tree parent ──────────────────────────────────────
@@ -171,14 +180,26 @@ class MessageDispatchAggregate:
             lambda x, y: x | y, # accumulator: set union
         )
 
-        # ── Step 5: dispatch messages via spawn ───────────────────────────────
+        # ── Step 5: round counter + message injection + spawn ─────────────────
+        # Round counter tracks simulation ticks for the injection window.
+        round_tick = old(0, lambda t: t + 1)  # noqa: F821
+
+        # Non-source nodes inject a new message toward device 0 every MSG_INTERVAL
+        # rounds during the injection window [MSG_START, MSG_END].
+        new_msg = (  # noqa: F821
+            (self_uid(), 0, round_tick)  # (from, to, time) — 0 placeholder for to  # noqa: F821
+            if (MSG_START <= round_tick <= MSG_END
+                and round_tick % MSG_INTERVAL == 0
+                and not is_src)
+            else None
+        )
+
         # C++: map_t r = spawn(CALL, [&](message const& m) {
         #         bool inpath = below.count(m.from) + below.count(m.to) > 0;
         #         status s = node.uid == m.to ? status::terminated_output :
         #                    inpath ? status::internal : status::border;
         #         return make_tuple(node.current_time(), s);
         #     }, m);
-        # The lambda is evaluated per active message process at each node.
         r = spawn(  # noqa: F821
             lambda m: (
                 0.0,   # delivery timestamp — C++: node.current_time()
@@ -186,7 +207,7 @@ class MessageDispatchAggregate:
                 else STATUS_INTERNAL if (m[0] in below or m[1] in below)
                 else STATUS_BORDER,
             ),
-            None,   # optional new message to inject (C++: common::option<message> m)
+            new_msg,
         )
 
         # ── Step 6: persist received messages ────────────────────────────────
@@ -209,31 +230,23 @@ class MessageDispatchAggregate:
 
 
 # ---------------------------------------------------------------------------
-# Demo simulation — AbstractExample subclass
+# AbstractExample subclass — toolchain bridge
 # ---------------------------------------------------------------------------
 
-def _bis_distance_msg(is_endpoint: bool, nbr_dists: list) -> float:
-    if is_endpoint:
-        return 0.0
-    if not nbr_dists:
-        return math.inf
-    return min(nbr_dists) + COMM * 0.1
-
-
 class MessageDispatchExample(AbstractExample):
-    """Pure-Python faithful implementation of message_dispatch.hpp.
+    """Runs MessageDispatchAggregate through the full toolchain.
 
-    Implements the same 6 steps as compute() for log generation without a
-    C++ compiler.  Messages are routed via a spanning tree rooted at device 0.
-
-    Nodes are stored as dict[int, MessageDispatchState]; the initial set is
-    range(DEVICES) but nodes may join or leave between rounds.
+    Validates, transpiles, compiles (SHA-256 cached), and runs the C++ binary.
+    State updates arrive via IPC; per-node log files are written from snapshots.
     """
 
     def __init__(self, seed: int = 13):
         self._rng = random.Random(seed)
-        self._in_flight: dict = {}
-        self._total_received: dict = {}
+        self._last_snapshot = None
+
+    @property
+    def aggregate_class(self):
+        return MessageDispatchAggregate
 
     @property
     def log_prefix(self) -> str:
@@ -245,123 +258,38 @@ class MessageDispatchExample(AbstractExample):
             for i in range(DEVICES)
         }
 
-    def initial_states(self, positions: dict) -> dict:
-        return {
-            i: MessageDispatchState(is_source=(i == 0))
-            for i in positions
-        }
-
-    def on_simulation_start(self) -> None:
-        self._in_flight = {}
-        self._total_received = {i: 0 for i in range(DEVICES)}
-
-    def round_step(self, round_num: int, positions: dict, states: dict) -> tuple:
-        new_positions = {}
-        new_states = {}
-        distances = {}
-        routing_sets = {}
-
-        # ── Step 1 + 2: move nodes and compute BIS distances ─────────────────
-        for nid, (x, y) in positions.items():
-            new_positions[nid] = (
-                max(0.0, min(SIDE, x + self._rng.uniform(-SPEED, SPEED))),
-                max(0.0, min(SIDE, y + self._rng.uniform(-SPEED, SPEED))),
-            )
-
-        for nid in positions:
-            nbrs = neighbors_of(positions, nid, COMM)
-            nbr_s = [states[n] for n in nbrs]
-            distances[nid] = _bis_distance_msg(
-                nid == 0,
-                [ns.center_dist for ns in nbr_s if math.isfinite(ns.center_dist)],
-            )
-
-        # ── Step 3: spanning-tree parents (min-distance neighbor) ─────────────
-        parents = {}
-        for nid in positions:
-            nbrs = neighbors_of(positions, nid, COMM)
-            if not nbrs or nid == 0:
-                parents[nid] = -1
-                continue
-            best_nbr = min(nbrs, key=lambda n: distances[n])
-            parents[nid] = best_nbr if distances[best_nbr] < distances[nid] else -1
-
-        # ── Step 4: routing sets via sp_collection ────────────────────────────
-        routing_sets = {nid: frozenset({nid}) for nid in positions}
-        for _ in range(8):
-            new_rs = {}
-            for nid in positions:
-                children = [n for n in neighbors_of(positions, nid, COMM)
-                            if parents.get(n) == nid]
-                child_sets = [routing_sets[c] for c in children]
-                new_rs[nid] = frozenset({nid}).union(*child_sets) if child_sets \
-                    else frozenset({nid})
-            routing_sets = new_rs
-
-        # ── Step 5: generate new messages (1% probability, rounds 10..50) ─────
-        if 10 <= round_num <= 50:
-            for nid in list(positions.keys()):
-                if self._rng.random() < 0.01:
-                    to_id = self._rng.randint(0, DEVICES - 2)
-                    if to_id >= nid:
-                        to_id += 1
-                    m = (nid, to_id, round_num)
-                    if m not in self._in_flight:
-                        self._in_flight[m] = True
-
-        # Route messages: process stays alive at node if inpath
-        delivered_this_round = set()
-        active_procs = {nid: 0 for nid in positions}
-        for m in list(self._in_flight.keys()):
-            from_id, to_id, _ = m
-            reached_dest = False
-            for nid in positions:
-                rs = routing_sets[nid]
-                inpath = (from_id in rs) or (to_id in rs)
-                if inpath:
-                    active_procs[nid] += 1
-                    if nid == to_id:
-                        reached_dest = True
-            if reached_dest:
-                delivered_this_round.add(m)
-                if to_id in self._total_received:
-                    self._total_received[to_id] += 1
-
-        for m in delivered_this_round:
-            del self._in_flight[m]
-
-        # ── Build new states ──────────────────────────────────────────────────
-        for nid in positions:
-            is_src = (nid == 0)
-            ds = distances[nid]
-            new_states[nid] = MessageDispatchState(
-                is_source=is_src,
-                center_dist=ds,
-                routing_set=routing_sets[nid],
-                received_count=self._total_received.get(nid, 0),
-                active_procs=active_procs[nid],
-            )
-
-        return new_positions, new_states
-
-    def log_header(self, node_id: int, state) -> str:
+    def log_header(self, node_id: int, state_data: Any) -> str:
         return (
             f"# MessageDispatch — node {node_id}\n"
             "# round,is_source,center_dist,"
             "routing_set_size,received_count,active_procs\n"
         )
 
-    def log_line(self, round_num: int, node_id: int, state) -> str:
+    def log_line(self, round_num: int, node_id: int, state_data: Any) -> str:
+        d = state_data if isinstance(state_data, dict) else vars(state_data)
+        rs = d.get('routing_set', frozenset())
+        rs_size = len(rs) if hasattr(rs, '__len__') else int(d.get('routing_set_size', 0))
         return (
-            f"{round_num},{int(state.is_source)},{state.center_dist:.4f},"
-            f"{len(state.routing_set)},{state.received_count},{state.active_procs}\n"
+            f"{round_num},{int(d.get('is_source', False))},"
+            f"{d.get('center_dist', 0.0):.4f},"
+            f"{rs_size},{d.get('received_count', 0)},{d.get('active_procs', 0)}\n"
         )
 
+    def on_round_complete(self, round_num: int, snapshot) -> None:
+        self._last_snapshot = snapshot
+
     def on_simulation_end(self) -> None:
-        total_msgs_delivered = sum(self._total_received.values())
+        snap = self._last_snapshot
+        total_received = 0
+        if snap and snap.nodes:
+            total_received = sum(
+                (ns.state_data.get('received_count', 0)
+                 if isinstance(ns.state_data, dict)
+                 else getattr(ns.state_data, 'received_count', 0))
+                for ns in snap.nodes
+            )
         print(f"    Wrote {DEVICES} log files → {self.log_dir}/")
-        print(f"    Total messages delivered across all nodes: {total_msgs_delivered}")
-        print(f"    Messages still in flight: {len(self._in_flight)}")
+        print(f"    Total messages received across all nodes (last round): {total_received}")
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +314,8 @@ def main() -> None:
 
     print("\n[3/3] Running demo simulation and writing per-node logs...")
     print(f"    Nodes: {DEVICES}  |  Rounds: {NUM_ROUNDS}  |  Source: node 0")
-    print(f"    Messages generated during rounds 10..50  |  Channel width: {COMM}")
+    print(f"    Messages injected during rounds {MSG_START}..{MSG_END}, "
+          f"every {MSG_INTERVAL} rounds  |  Channel width: {COMM}")
     MessageDispatchExample().run(NUM_ROUNDS)
 
     print("\nAlgorithm summary:")
@@ -394,8 +323,8 @@ def main() -> None:
     print("  2. bis_distance     — smooth gradient from source (device 0)")
     print("  3. min_hood + nbr   — spanning-tree parent (nearest neighbor toward source)")
     print("  4. sp_collection    — routing subtree: node UIDs 'below' each node")
-    print("  5. spawn            — one aggregate process per in-flight message")
-    print("       inpath = from ∈ below OR to ∈ below")
+    print("  5. old + spawn      — round counter, message injection, process dispatch")
+    print("       new_msg = (self_uid, 0, tick) for rounds 10..50 every 10 rounds")
     print("       status = terminated_output (at dest) | internal | border")
     print("  6. old              — persist received-message map across rounds")
     print()

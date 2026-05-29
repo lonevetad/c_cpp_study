@@ -1,7 +1,7 @@
 # DSL vs. Real FCPP C++ API — Manual Review Targets
 
 **Created:** 2026-05-28  
-**Last updated:** 2026-05-28 (v1.6 — `self_uid()` primitive added; §1 partially resolved)  
+**Last updated:** 2026-05-28 (v1.9 Step A — `receiver_uid = broadcast(...)` added §1; `frozenset`→`set_t` §3.3 and `min_hood` tuple→`make_tuple` §3.5 resolved in transpiler)  
 **Scope:** Everything in the Python DSL that simplifies, approximates, or silently
 deviates from real FCPP C++ behavior.  Each item below is a target for manual inspection
 before any generated C++ code is used in production or safety-critical contexts.
@@ -63,7 +63,7 @@ is correct.  Examples updated to v1.6 use `self_uid()` in place of hard-coded `0
 | `message_dispatch.py` | spawn key `(from_id, to_id)` uses `0` | `(node.uid, target_uid)` | ⚠️ still `0` |
 | `worker_role_assignment.py` | `sp_collection(d, frozenset({self_uid()}), ...)` | `sp_collection(CALL, d, set_t{node.uid}, ...)` | ✅ fixed v1.6 |
 | `worker_role_assignment.py` | `min_hood((nbr_dists, self_uid()))` | `min_hood(CALL, {nbr_dists, node.uid})` | ✅ fixed v1.6 |
-| `worker_role_assignment.py` | spawn key `(self_uid(), 0)` | `(node.uid, receiver_uid)` | ✅ sender fixed; receiver still `0` |
+| `worker_role_assignment.py` | spawn key `(self_uid(), receiver_uid)` | `(node.uid, receiver_uid)` | ✅ both sender and receiver fixed (v1.9 Step A) |
 
 ### Consequences in generated C++
 
@@ -93,7 +93,7 @@ is correct.  Examples updated to v1.6 use `self_uid()` in place of hard-coded `0
 | Option | Effort | Status |
 |---|---|---|
 | Add `self_uid()` DSL primitive → `node.uid` in C++ | Medium | ✅ **Done in v1.6** — `python_dsl/primitives/self_uid.py` + `visit_Call` special case |
-| Distribute receiver_uid via `broadcast` from RECEIVER | Low-Medium | ⚠️ Outstanding — requires one extra primitive call in step 5 preamble |
+| Distribute receiver_uid via `broadcast` from RECEIVER | Low-Medium | ✅ **Done in v1.9 Step A** — `receiver_uid = broadcast(is_receiver, self_uid())` added as step 5 in `worker_role_assignment.py`; spawn key changed from `(self_uid(), 0)` to `(self_uid(), receiver_uid)` |
 | Pass UID as part of initial state via FCPP tag dispatch | Medium-High | ⚠️ Outstanding — C++ side work required |
 | Set role via C++ configuration header (not DSL) | Low | ⚠️ Outstanding — valid for fixed topologies |
 
@@ -238,6 +238,10 @@ through verbatim, producing invalid C++.
 
 ### 3.3 `sp_collection` / `mp_collection` — `frozenset` is not a C++ type
 
+✅ **Resolved in v1.9 Step A** — `PythonAstVisitor.visit_Call` now handles `frozenset`:
+- `frozenset({x})` → `set_t{x}`
+- `frozenset()` → `set_t{}`
+
 **C++ usage**:
 ```cpp
 set_t below = sp_collection(CALL, ds, set_t{node.uid}, set_t{},
@@ -245,24 +249,19 @@ set_t below = sp_collection(CALL, ds, set_t{node.uid}, set_t{},
 ```
 where `set_t = std::unordered_set<device_t>`.
 
-**Python DSL**:
+**Python DSL** (examples updated to v1.6+ use `self_uid()` already):
 ```python
 routing_set = sp_collection(
     dist_to_receiver,
-    frozenset({0}),       # ← Python type, not C++
-    frozenset(),          # ← Python type, not C++
-    lambda x, y: x | y,
+    frozenset({self_uid()}),   # → set_t{node.uid} ✅
+    frozenset(),               # → set_t{} ✅
+    lambda x, y: x | y,       # → [=](auto x, auto y){ return (x | y); }
 )
 ```
 
-The transpiler emits `frozenset({0})` verbatim into C++.  `frozenset` does not exist
-in C++ — this will cause a **compile error** the first time someone actually tries to
-compile the generated code against FCPP headers.
-
-**Review target**: before compiling, replace:
-- `frozenset({0})` → `set_t{node.uid}` (using real `node.uid`, see §1)
-- `frozenset()` → `set_t{}`
-- `lambda x, y: x | y` → `[](set_t x, set_t const& y){ x.insert(y.begin(),y.end()); return x; }`
+**Remaining review target**: the lambda `x | y` generates `(x | y)` in C++.  For
+`set_t` this requires a `|` operator overload; the correct FCPP idiom is the
+`insert(begin, end)` form shown above.  This lambda body is not auto-fixed.
 
 ---
 
@@ -294,23 +293,25 @@ literals with the correct enum names in the generated C++.
 
 ### 3.5 `min_hood` with tuple — `make_tuple` is missing
 
+✅ **Partially resolved in v1.9 Step A** — `PythonAstVisitor.visit_Call` now detects a
+single `ast.Tuple` argument to `min_hood` / `max_hood` and emits `std::make_tuple(...)`.
+
 **C++ usage**:
 ```cpp
 device_t parent = get<1>(
     min_hood(CALL, make_tuple(nbr(CALL, ds), node.nbr_uid())));
 ```
 
-**Python DSL**:
+**Python DSL** (after Step A transpiler fix):
 ```python
-parent = min_hood((nbr_dists, 0))   # noqa: F821
+parent = min_hood((nbr_dists, self_uid()))   # noqa: F821
+# now transpiles to: min_hood(CALL, std::make_tuple(nbr_dists, node.uid))  ✅
 ```
 
-The transpiler emits `min_hood(CALL, (nbr_dists, 0))`.  A bare `(x, y)` in C++ is
-a comma-expression, not a tuple.  The generated code needs `std::make_tuple(nbr_dists,
-node.nbr_uid())` and `std::get<1>(result)` to extract the UID component.
+**Remaining manual post-step**: when the call-site uses a *component* of the tuple
+result (e.g., extracting the UID for routing decisions), add `std::get<N>(parent)` in
+the generated C++ by hand.  This cannot be automated without type inference.
 
-**Review target**: anywhere `min_hood` or `max_hood` is called with a tuple argument,
-verify that the generated C++ uses `std::make_tuple(...)` and `std::get<N>(...)`.
 
 ---
 

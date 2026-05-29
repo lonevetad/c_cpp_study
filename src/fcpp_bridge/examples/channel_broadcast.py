@@ -20,19 +20,19 @@ Log files:
     Per-node logs written to examples/logs/node_<id>_channel_broadcast.log
     Each line: round, is_source, is_dest, source_dist, dest_dist, in_channel
 
-Differences from original C++:
-    - Source (device 0) and destination (device 1) are static by device ID.
-      The Python port carries is_source / is_dest in the state (set externally).
-    - Demo simulation uses a simplified spatial topology.
+Running:
+    ChannelBroadcastExample().run(NUM_ROUNDS) invokes the full toolchain:
+    validate → transpile → compile → SwarmProcess → per-node logs.
+    A C++ compiler and FCPP headers are required.
 """
 
 import math
 import random
 from dataclasses import dataclass
+from typing import Any
 
 from fcpp_bridge.python_dsl import aggregate_function, Neighborhood
 from fcpp_bridge.examples._example_utils import (
-    neighbors_of,
     report_validation,
     report_transpilation,
 )
@@ -98,7 +98,7 @@ class ChannelBroadcastAggregate:
     """
 
     def initial_state(self) -> ChannelState:
-        """Start with unknown distances; source and dest flags set externally."""
+        """Start with unknown distances; source and dest determined by uid."""
         return ChannelState()
 
     def compute(
@@ -130,12 +130,14 @@ class ChannelBroadcastAggregate:
 
         # ── Step 2: BIS distance from the source endpoint (device 0) ─────────
         # C++ channel(): double ds = bis_distance(CALL, source, 1, 100);
-        # Parameters: is_source flag, precision=1, speed=100
-        ds = bis_distance(self_state.is_source, 1, 100)  # noqa: F821
+        # self_uid() → node.uid in C++ (no CALL counter increment)
+        is_source = (self_uid() == 0)  # noqa: F821
+        ds = bis_distance(is_source, 1, 100)  # noqa: F821
 
         # ── Step 3: BIS distance from the destination endpoint (device 1) ────
         # C++ channel(): double dd = bis_distance(CALL, dest, 1, 100);
-        dd = bis_distance(self_state.is_dest, 1, 100)    # noqa: F821
+        is_dest = (self_uid() == 1)  # noqa: F821
+        dd = bis_distance(is_dest, 1, 100)    # noqa: F821
 
         # ── Step 4: broadcast ds (source distance) from source to whole network
         # This propagates the direct source→destination path length to all nodes.
@@ -151,13 +153,13 @@ class ChannelBroadcastAggregate:
         # (via both endpoints) is close to the direct span.
         in_channel = (
             (ds + dd < span + CHANNEL_WIDTH)
-            or self_state.is_source
-            or self_state.is_dest
+            or is_source
+            or is_dest
         )
 
         return ChannelState(
-            is_source=self_state.is_source,
-            is_dest=self_state.is_dest,
+            is_source=is_source,
+            is_dest=is_dest,
             source_dist=ds,
             dest_dist=dd,
             in_channel=in_channel,
@@ -165,31 +167,23 @@ class ChannelBroadcastAggregate:
 
 
 # ---------------------------------------------------------------------------
-# Demo simulation — AbstractExample subclass
+# AbstractExample subclass — toolchain bridge
 # ---------------------------------------------------------------------------
 
-def _bis_distance(is_endpoint: bool, nbr_dists: list) -> float:
-    """Approximate BIS distance: like ABF but with smoother convergence."""
-    if is_endpoint:
-        return 0.0
-    if not nbr_dists:
-        return math.inf
-    return min(nbr_dists) + COMM * 0.1
-
-
 class ChannelBroadcastExample(AbstractExample):
-    """Pure-Python faithful implementation of channel_broadcast.hpp.
+    """Runs ChannelBroadcastAggregate through the full toolchain.
 
-    Implements the same 5 steps as compute() using Python logic so that
-    per-node log files can be produced without a C++ compiler.
-
-    Nodes are stored as dict[int, ChannelState]; the initial set is
-    range(DEVICES) but nodes may join or leave between rounds.
+    Validates, transpiles, compiles (SHA-256 cached), and runs the C++ binary.
+    State updates arrive via IPC; per-node log files are written from snapshots.
     """
 
     def __init__(self, seed: int = 7):
         self._rng = random.Random(seed)
-        self._final_states: dict = {}
+        self._last_snapshot = None
+
+    @property
+    def aggregate_class(self):
+        return ChannelBroadcastAggregate
 
     @property
     def log_prefix(self) -> str:
@@ -201,88 +195,33 @@ class ChannelBroadcastExample(AbstractExample):
             for i in range(DEVICES)
         }
 
-    def initial_states(self, positions: dict) -> dict:
-        return {
-            nid: ChannelState(is_source=(nid == 0), is_dest=(nid == 1))
-            for nid in positions
-        }
-
-    def round_step(self, round_num: int, positions: dict, states: dict) -> tuple:
-        new_positions = {}
-        new_states = {}
-
-        for nid, (x, y) in positions.items():
-            new_positions[nid] = (
-                max(0.0, min(SIDE, x + self._rng.uniform(-SPEED, SPEED))),
-                max(0.0, min(SIDE, y + self._rng.uniform(-SPEED, SPEED))),
-            )
-
-        for nid in positions:
-            s = states[nid]
-            nbrs = neighbors_of(positions, nid, COMM)
-            nbr_s = [states[n] for n in nbrs]
-
-            # Step 2: BIS distance to source
-            ds = _bis_distance(
-                s.is_source,
-                [ns.source_dist for ns in nbr_s if math.isfinite(ns.source_dist)],
-            )
-
-            # Step 3: BIS distance to destination
-            dd = _bis_distance(
-                s.is_dest,
-                [ns.dest_dist for ns in nbr_s if math.isfinite(ns.dest_dist)],
-            )
-
-            # Step 4: broadcast — propagate dd from source along ds gradient
-            if s.is_source:
-                span = dd
-            else:
-                parents = [
-                    (ns.source_dist, ns.dest_dist)
-                    for ns in nbr_s
-                    if ns.source_dist < ds and math.isfinite(ns.source_dist)
-                ]
-                if parents:
-                    span = min(parents, key=lambda t: t[0])[1]
-                else:
-                    span = s.source_dist + s.dest_dist
-
-            # Step 5: channel check
-            in_channel = (
-                (ds + dd < span + CHANNEL_WIDTH)
-                or s.is_source
-                or s.is_dest
-            )
-
-            new_states[nid] = ChannelState(
-                is_source=s.is_source,
-                is_dest=s.is_dest,
-                source_dist=ds,
-                dest_dist=dd,
-                in_channel=in_channel,
-            )
-
-        return new_positions, new_states
-
-    def log_header(self, node_id: int, state) -> str:
+    def log_header(self, node_id: int, state_data: Any) -> str:
         return (
             f"# ChannelBroadcast — node {node_id}\n"
             "# round,is_source,is_dest,source_dist,dest_dist,in_channel\n"
         )
 
-    def log_line(self, round_num: int, node_id: int, state) -> str:
+    def log_line(self, round_num: int, node_id: int, state_data: Any) -> str:
+        d = state_data if isinstance(state_data, dict) else vars(state_data)
         return (
-            f"{round_num},{int(state.is_source)},{int(state.is_dest)},"
-            f"{state.source_dist:.4f},{state.dest_dist:.4f},{int(state.in_channel)}\n"
+            f"{round_num},{int(d.get('is_source', False))},{int(d.get('is_dest', False))},"
+            f"{d.get('source_dist', 0.0):.4f},{d.get('dest_dist', 0.0):.4f},"
+            f"{int(d.get('in_channel', False))}\n"
         )
 
-    def on_round_complete(self, round_num: int, positions: dict, states: dict) -> None:
-        self._final_states = states
+    def on_round_complete(self, round_num: int, snapshot) -> None:
+        self._last_snapshot = snapshot
 
     def on_simulation_end(self) -> None:
-        states = self._final_states
-        in_channel_count = sum(1 for s in states.values() if s.in_channel)
+        snap = self._last_snapshot
+        in_channel_count = 0
+        if snap and snap.nodes:
+            in_channel_count = sum(
+                1 for ns in snap.nodes
+                if (ns.state_data.get('in_channel', False)
+                    if isinstance(ns.state_data, dict)
+                    else getattr(ns.state_data, 'in_channel', False))
+            )
         print(f"    Wrote {DEVICES} log files → {self.log_dir}/")
         print(f"    Last round: {in_channel_count}/{DEVICES} nodes inside the channel")
 

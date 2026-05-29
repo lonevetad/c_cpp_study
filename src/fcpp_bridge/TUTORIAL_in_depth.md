@@ -900,15 +900,81 @@ proxy.close()
 
 ---
 
-## 11. Further examples
+## 11. Multi-swarm output channels
+
+`DeviceManager` accepts an optional `output_channel=` argument that receives
+fleet-wide status events (start failures, step failures, close errors).  When
+omitted a `LoggingOutputChannel(level="INFO")` is used automatically.
+
+### Class hierarchy
+
+```
+OutputChannel (ABC)          — abstract base; Prototype pattern (clone())
+├── LoggingOutputChannel     — emits via get_logger() at a configurable level
+├── FileOutputChannel        — writes JSON or CSV lines to a file or stream
+├── CallbackOutputChannel    — wraps Callable[[str, Any], None]
+└── ProxyOutputChannel       — fan-out to N sub-channels (sequential or parallel)
+```
+
+### Basic usage
+
+```python
+from fcpp_bridge.ipc import (
+    DeviceManager, FileOutputChannel, LoggingOutputChannel, ProxyOutputChannel
+)
+
+# Log fleet events to a file AND to the logger simultaneously
+proxy = ProxyOutputChannel()
+proxy.add_channel(LoggingOutputChannel(level="WARNING"))
+proxy.add_channel(FileOutputChannel("fleet_events.jsonl"))
+
+manager = DeviceManager(output_channel=proxy)
+manager.add_simulation("swarm1", binary_path)
+manager.start_all()   # failures appear in fleet_events.jsonl
+```
+
+### ProxyOutputChannel — parallel mode
+
+```python
+proxy = ProxyOutputChannel(mode="parallel")
+# send() dispatches to all sub-channels concurrently via ThreadPoolExecutor
+```
+
+### Prototype — clone a channel template
+
+```python
+template = FileOutputChannel("events.jsonl")
+ch1 = template.clone()   # independent clone; does NOT own the stream
+ch2 = template.clone()   # same stream, both safe to send through concurrently
+```
+
+### CallbackOutputChannel — custom routing
+
+```python
+from fcpp_bridge.ipc import CallbackOutputChannel
+
+events = []
+ch = CallbackOutputChannel(lambda name, payload: events.append((name, payload)))
+manager = DeviceManager(output_channel=ch)
+# After start_all() or step_all() failures, events list contains (event_name, dict)
+```
+
+---
+
+## 12. Further examples
 
 All examples in `examples/` follow the same pattern: an `@aggregate_function` class
-(transpilable) plus a pure-Python `_demo_simulate()` that needs no C++ toolchain.
+(transpilable) that runs through the full toolchain via `AbstractExample.run()`.
+A C++ compiler and FCPP headers are required.
 
 | File | Highlights |
 | ---- | ---------- |
+| `channel_broadcast.py` | `bis_distance` + `broadcast` elliptical channel; source injects a value that propagates along the shortest-path tree to all nodes inside the channel |
+| `collection_compare.py` | SP / MP / WMP collection algorithms run side-by-side; `sp_collection`, `mp_collection`, `wmp_collection` results compared per-round |
 | `message_dispatch.py` | Full `spawn` + `sp_collection` spanning-tree routing (port of `message_dispatch.hpp`) |
 | `spreading_collection.py` | `abf_distance`, `mp_collection`, `broadcast` (port of `spreading_collection.hpp`) |
+| `chain_decaying.py` | TTL-based decaying chain (port of `chain_decaying.hpp`); `nbr` + `min_hood` + `self_uid()`; `(should_hold, hops, ttl, next_uid)` 4-tuple state; nodes decay out when TTL ≥ threshold |
+| `communication_roles_assignment.py` | **`bis_distance` ×2** + `old` + `broadcast` + **`match/case`** + `self_uid()`; 4 roles (SENDER / REPEATER / RECEIVER / UNASSIGNED) negotiated by proximity to pre-placed source/sink points |
 | `worker_role_assignment.py` | **`match/case` → C++ `switch`** + `spawn` + `old` + `self_uid()` + `RoleCommunicationType`; 8 `WorkerRole` values, 24-node disaster swarm |
 
 `worker_role_assignment.py` is the canonical example of the v1.4–v1.7 grammar features:

@@ -1,0 +1,79 @@
+SESSION RECORD — 2026-05-28h
+Topic: V1_9_PLAN.md full revision — added Steps E + F; reordered A→F dependency chain
+Branch: bugfix/fcpp_bridge/it1
+Tests: 624 pass, 0 fail (no code changes; planning only)
+
+═══════════════════════════════════════════════════════════════════════════
+SUMMARY OF WORK
+═══════════════════════════════════════════════════════════════════════════
+
+This session was purely planning/documentation. No tests were added or modified.
+
+  1. QUESTION ANSWERED: WHY TWO CLASSES PER EXAMPLE FILE
+     - @aggregate_function class = C++ algorithm spec / transpilation input.
+       Its compute() calls DSL primitives (bis_distance, rectangle_walk, etc.)
+       that are undefined in Python but transpiled to valid C++ by the transpiler.
+     - AbstractExample subclass = simulation harness. After v2.0 session, it
+       was a pure-Python re-implementation of the same algorithm.
+     The two-class structure was *intentional per phase*, but the pure-Python
+     simulation path defeats the purpose of the project for developers reading
+     the examples as inspiration. The plan (Steps E+F) removes that path.
+
+  2. V1_9_PLAN.md FULL REVISION
+     - Original plan had 9 "gap" sections (Gaps #1–#9) plus a v1.8 section
+       and a flat checklist. It was written without Steps E and F.
+     - New structure: 6 ordered steps (A→F) with:
+       * Step A — Transpiler completeness (absorbs Gaps #1–#4)
+       * Step B — Library foundations (absorbs v1.8 logging + Gap #8 RAII)
+       * Step C — OutputChannel + DeviceManager integration (absorbs Gap #9)
+       * Step D — Runtime & physical-device support (absorbs Gaps #6 + #7)
+       * Step E — AbstractExample toolchain bridge (NEW)
+       * Step F — Examples subclasses migration (NEW)
+     - Ordering rationale: A first (correct C++ output from day one); B before
+       C–F (clean library foundation); C before E (OutputChannel available as
+       optional fan-out); D before E (liveness support before running examples);
+       E before F (interface defined before subclasses migrate).
+
+  3. KEY DESIGN DECISIONS RECORDED IN PLAN
+     - AbstractExample.run() new skeleton: validate → transpile → compile
+       (SHA-256 cached) → SwarmProcess.start() → add nodes → step() loop
+       → _on_snapshot writes per-node log files.
+     - Interface changes in Step E:
+       * ADDED: aggregate_class property → Type
+       * REMOVED: round_step(), initial_states()
+       * UPDATED: on_round_complete signature (round_num, SwarmSnapshot)
+       * state_data: Any (from NodeState.state_data) replaces Python dataclasses
+     - Scheduling problems (collection_compare source-switch, message_dispatch
+       rounds 10–50) must move into compute() using FCPP time primitives
+       (counter(), constant_after()) — educationally valuable.
+
+  4. MEMORY UPDATED
+     - project_fcpp_bridge.md: description, V1_9_PLAN step table (A–F),
+       key design decision paragraph, v2.0 examples transitional-state note.
+
+═══════════════════════════════════════════════════════════════════════════
+FILES CHANGED
+═══════════════════════════════════════════════════════════════════════════
+
+src/fcpp_bridge/development_history/V1_9_PLAN.md
+    Full rewrite: 9 gap sections + v1.8 + flat checklist
+    → 6 ordered steps A–F with per-step action tables, session-save notes,
+      and estimated test deltas (+48 total → 672 projected)
+
+memory/project_fcpp_bridge.md  (3 edits)
+    - description field: added "V1_9_PLAN revised with Steps E+F"
+    - "Known gaps" section: replaced with V1_9_PLAN step table
+    - v2.0 examples note: added transitional-state paragraph
+
+═══════════════════════════════════════════════════════════════════════════
+NEXT: SESSION 2026-05-28i — STEP A EXECUTION
+═══════════════════════════════════════════════════════════════════════════
+
+Step A actions (in execution order):
+  A.4  Verify nbr_uid in _FCPP_PRIMITIVES (read-only check, no code change likely)
+  A.2  frozenset → set_t{...} handler in visit_Call
+  A.3  min_hood/max_hood + Tuple → std::make_tuple heuristic in visit_Call
+  A.1  worker_role_assignment.py: add receiver_uid = broadcast(is_receiver, self_uid())
+       + fix spawn key (self_uid(), 0) → (self_uid(), receiver_uid)
+  A.5  Tests (+5), docs (node_uid__placeholder_flagging.md,
+       WORKER_ROLE_ASSIGNMENT.md), session record, memory update
