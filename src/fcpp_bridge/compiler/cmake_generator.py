@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -10,13 +11,12 @@ class CmakeGenerator:
         fcpp_src_path: Optional[Path] = None,
         runtime_include_path: Optional[Path] = None,
     ):
-        project_root = Path(__file__).parent.parent
-        self.fcpp_src_path = fcpp_src_path or (
-            project_root / "fcpp_clone_GITIGNORE_ME" / "fcpp" / "src"
-        )
-        self.runtime_include_path = runtime_include_path or (
-            project_root / "build" / "runtime"
-        )
+        if fcpp_src_path is not None:
+            self.fcpp_src_path = fcpp_src_path
+        else:
+            env = os.environ.get("FCPP_INCLUDE_PATH")
+            self.fcpp_src_path = Path(env) if env else None
+        self.runtime_include_path = runtime_include_path
 
     def generate(
         self,
@@ -31,14 +31,19 @@ class CmakeGenerator:
                 f"set(CMAKE_RUNTIME_OUTPUT_DIRECTORY {output_dir})\n"
             )
 
+        include_lines = ""
+        if self.fcpp_src_path:
+            include_lines += f"include_directories({self.fcpp_src_path})\n"
+        if self.runtime_include_path:
+            include_lines += f"include_directories({self.runtime_include_path})\n"
+
         return (
             "cmake_minimum_required(VERSION 3.14)\n"
             f"project({program_name})\n\n"
             "set(CMAKE_CXX_STANDARD 14)\n"
             "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n\n"
             f"{output_dir_line}"
-            f"include_directories({self.fcpp_src_path})\n"
-            f"include_directories({self.runtime_include_path})\n\n"
+            f"{include_lines}\n"
             f"add_executable({program_name} {cpp_file.name})\n\n"
             f"target_compile_options({program_name} PRIVATE\n"
             "    -Wall -Wextra -O2\n"

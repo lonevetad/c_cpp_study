@@ -4,6 +4,11 @@ This file collects hints for future development sessions.
 Each entry was noted as a "future exercise" during the writing of an existing example.
 Entries are grouped by origin and roughly ordered from simpler to more complex.
 
+> **FE-9, FE-10, FE-11** (the `scattered_database` → `area_discovery` →
+> `iteratively_area_discovery` series) are documented in full detail in
+> [`EXERCISES_PLAN.md`](EXERCISES_PLAN.md).
+> The summary entries below serve as index entries only.
+
 ---
 
 ## From `communication_roles_assignment.py`
@@ -135,3 +140,48 @@ Nodes adjust their effective communication radius based on local density:
 - Use `count_hood()` to estimate local density and `old` to smooth changes over time.
 
 A simple showcase for `count_hood` + `old` without complex routing.
+
+---
+
+## Planned exercise series — `ex_utils` → distributed data & area coverage
+
+> Full design: [`EXERCISES_PLAN.md`](EXERCISES_PLAN.md)
+
+### FE-9: `scattered_database`
+**Complexity**: High  
+**DSL primitives**: `spawn`, `old`, `bis_distance`, `broadcast`, `nbr`, `min_hood`  
+**Builds on**: `spread_data_coprime_ID_pos` (ex_utils)
+
+Emulates a sharded, distributed, replicated key-value store. Each node holds a coprime-
+neighbour shard (populated by `spread_data_coprime_ID_pos`). When a node needs an entry
+it does not own, it sends a query via `spawn`; the holder routes the value back via a
+reverse `spawn` (or `bis_distance` + `channel_broadcast`).
+
+---
+
+### FE-10: `area_discovery`
+**Complexity**: High  
+**DSL primitives**: `nbr`, `fold_hood` + all of FE-9  
+**Builds on**: FE-9, `ex_utils/tiles.py` (new)
+
+A rectangular area is divided into a regular grid. Each node claims its nearest tile
+centre and shares only that centre via `nbr` (never the full map). Tile shapes (polygon
+corners) are stored as `scattered_database` values keyed on tile centre. One node per
+tile is guaranteed (`n ≥ num_tiles`).
+
+---
+
+### FE-11: `iteratively_area_discovery`
+**Complexity**: Very High  
+**DSL primitives**: `spawn`, `old`, `nbr`, `min_hood`, `bis_distance`, `follow_target` + all of FE-10  
+**Builds on**: FE-10
+
+Tiles outnumber nodes. Nodes iteratively claim, move to, and explore tiles
+(`EXPLORE_TICKS = 7`). Double-assignment is prevented by a **second
+`scattered_database`** (`assignment_db: {tile_center → node_id}`): when a node claims
+a tile, it propagates the assignment to 1-hop neighbours via a self-terminating 1-hop
+`spawn` (liveness: `hops ≤ 1 AND tile NOT IN recipient.assignment_db`). A
+query-with-timeout protocol (`2 × diameter + margin` rounds) verifies whether a tile
+is unassigned; on timeout, a distributed min-distance election (node closest to tile
+centre wins, via `nbr` + `min_hood`) determines the claimant. Supports rectangular
+(Version A) and non-self-intersecting polygon (Version B) areas.

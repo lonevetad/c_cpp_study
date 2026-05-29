@@ -1,3 +1,4 @@
+import os
 import platform
 import shutil
 import subprocess
@@ -71,8 +72,10 @@ class Compiler:
             "-Wall",
             "-Wextra",
             f"-O{self.opt_level}",
-            "-I", str(Path(__file__).parent.parent / "fcpp_clone_GITIGNORE_ME" / "src"),
         ]
+        fcpp_include = os.environ.get("FCPP_INCLUDE_PATH")
+        if fcpp_include:
+            flags.extend(["-I", fcpp_include])
         for inc in self.extra_includes:
             flags.extend(["-I", inc])
 

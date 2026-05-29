@@ -24,31 +24,38 @@ The tutorial walks through every stage of the pipeline: Python DSL → C++ → c
 
 ## Prerequisites
 
-| Requirement                           | Notes                                                     |
-| ------------------------------------- | --------------------------------------------------------- |
-| Python 3.10+                          | `python --version`                                        |
-| `fcpp_bridge` package on `PYTHONPATH` | `export PYTHONPATH=/path/to/c_cpp_study/src`              |
-| FCPP C++ framework headers            | Clone from `github.com/fcpp/fcpp`; set `FCPP_SRC` env var |
-| `g++` ≥ 9 with C++14 support          | `g++ --version`                                           |
-| (Optional) `lld` linker               | Faster linking on Linux                                   |
+| Requirement                  | Notes                                                      |
+| ---------------------------- | ---------------------------------------------------------- |
+| Python 3.10+                 | `python --version`                                         |
+| `fcpp_bridge` installed      | `pip install -e .` from repo root (see note below)         |
+| FCPP C++ framework headers   | Clone from `github.com/fcpp/fcpp`; set `FCPP_SRC` env var |
+| `g++` ≥ 9 with C++14 support | `g++ --version`                                            |
+| (Optional) `lld` linker      | Faster linking on Linux                                    |
 
-> **`PYTHONPATH` requirement**: `fcpp_bridge` is not published on PyPI — it lives
-> in `src/fcpp_bridge/` inside this repository.  Python must find the `src/`
-> directory on its module search path before any `import fcpp_bridge` will work.
+> **Making `import fcpp_bridge` work**: the package lives in `src/fcpp_bridge/`
+> and is not on PyPI.  Install it in editable mode once so no prefix is needed:
 >
 > ```bash
-> # Persistent for the terminal session (run from the repository root):
-> export PYTHONPATH=/path/to/c_cpp_study/src
->
-> # — or — inline prefix for a single command:
-> PYTHONPATH=src python src/fcpp_bridge/examples/my_script.py
+> # From the repository root (c_cpp_study/) — one time only:
+> pip install -e .
 > ```
 >
-> If your working directory is `src/fcpp_bridge/`, the `src/` directory is one
-> level up (`..`):
->
+> Verify with:
 > ```bash
-> PYTHONPATH=.. /usr/bin/python3 examples/my_script.py
+> python -c "import fcpp_bridge; print(fcpp_bridge.__version__)"
+> ```
+>
+> **No-install alternative** — prefix every command instead:
+> ```bash
+> PYTHONPATH=src python -m fcpp_bridge.examples.my_script
+> # or export once for the session:
+> export PYTHONPATH=/path/to/c_cpp_study/src
+> ```
+>
+> **System Python blocked by PEP 668?** (Debian/Ubuntu) — use a venv:
+> ```bash
+> python -m venv .venv && source .venv/bin/activate
+> pip install -e .
 > ```
 
 > **No C++ toolchain?** Skip Steps 3-5 and run the pure-Python simulation at
@@ -425,30 +432,23 @@ exclusive flags:
 The script writes two artifact files so a later stage can pick up where a prior run
 left off:
 
-| Stage       | Artifact written                                             |
-| ----------- | ------------------------------------------------------------ |
-| `transpile` | `.fcpp_bridge_cpp/consensus_latest.cpp`                      |
-| `compile`   | `.fcpp_bridge_build/.latest_binary` (stores the binary path) |
+| Stage       | Artifact written                                                      |
+| ----------- | --------------------------------------------------------------------- |
+| `transpile` | `examples/.fcpp_cpp/consensus_latest.cpp`                             |
+| `compile`   | `examples/.fcpp_build/.latest_binary` (stores the binary path)        |
 
 ```bash
-export PYTHONPATH=/path/to/c_cpp_study/src
-
-# Run everything
-python src/fcpp_bridge/examples/end_to_end.py
+# Run everything (from repo root, after pip install -e .)
+python -m fcpp_bridge.examples.end_to_end
 
 # Run only validate + transpile (no compiler needed)
-python src/fcpp_bridge/examples/end_to_end.py --steps validate transpile
+python -m fcpp_bridge.examples.end_to_end --steps validate transpile
 
 # Resume from compile (loads consensus_latest.cpp from disk)
-python src/fcpp_bridge/examples/end_to_end.py --from compile
+python -m fcpp_bridge.examples.end_to_end --from compile
 
 # Run only the simulation step (no compiler needed)
-python src/fcpp_bridge/examples/end_to_end.py --steps run --nodes 20 --rounds 15
-
-# If compile is skipped but the artifact is missing, the script prints a clear error:
-# [error] 'compile' requires a prior transpile run.
-#         Expected artifact: .fcpp_bridge_cpp/consensus_latest.cpp
-#         Run:  python end_to_end.py --steps transpile
+python -m fcpp_bridge.examples.end_to_end --steps run --nodes 20 --rounds 15
 ```
 
 ---
@@ -456,8 +456,9 @@ python src/fcpp_bridge/examples/end_to_end.py --steps run --nodes 20 --rounds 15
 ## Shell commands — everything at a glance
 
 ```bash
-# 1. Set the Python path
-export PYTHONPATH=/path/to/c_cpp_study/src
+# 1. Install once (skip if already done)
+#    From repo root:  pip install -e .
+#    No-install alternative:  export PYTHONPATH=/path/to/c_cpp_study/src
 
 # 2. (Optional) verify DSL validation passes
 python -c "
@@ -471,7 +472,7 @@ print('Validation OK, warnings:', warnings)
 python run.py
 
 # 4. Run tests (if you add tests)
-PYTHONPATH=src pytest my_project/tests/ -v
+pytest my_project/tests/ -v
 ```
 
 ---

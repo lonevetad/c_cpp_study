@@ -19,26 +19,28 @@ production-quality simulation class that supports:
 Same as the simple tutorial plus:
 
 ```bash
-pip install fcpp_bridge    # or PYTHONPATH=.../src (see note below)
+# From the repository root (c_cpp_study/) — one time only:
+pip install -e .
 ```
 
-> **`PYTHONPATH` requirement**: `fcpp_bridge` is not published on PyPI — it lives
-> in `src/fcpp_bridge/` inside this repository.  If you are not installing the
-> package, add the `src/` directory to Python's module search path instead:
+> **Making `import fcpp_bridge` work**: the package lives in `src/fcpp_bridge/`
+> and is not on PyPI.  Install it in editable mode once so no prefix is needed:
 >
 > ```bash
-> # Persistent for the terminal session (run from the repository root):
-> export PYTHONPATH=/path/to/c_cpp_study/src
->
-> # — or — inline prefix for a single command:
-> PYTHONPATH=src python src/fcpp_bridge/examples/my_script.py
+> pip install -e .           # from repo root; one-time setup
+> python -c "import fcpp_bridge; print(fcpp_bridge.__version__)"
 > ```
 >
-> If your working directory is `src/fcpp_bridge/`, the `src/` directory is one
-> level up (`..`):
->
+> **No-install alternative** — prefix every command instead:
 > ```bash
-> PYTHONPATH=.. /usr/bin/python3 examples/my_script.py
+> PYTHONPATH=src python -m fcpp_bridge.examples.my_script
+> export PYTHONPATH=/path/to/c_cpp_study/src   # persistent for the session
+> ```
+>
+> **System Python blocked by PEP 668?** (Debian/Ubuntu) — use a venv:
+> ```bash
+> python -m venv .venv && source .venv/bin/activate
+> pip install -e .
 > ```
 
 Verify:
@@ -780,8 +782,8 @@ if __name__ == "__main__":
 ## 9. Shell commands
 
 ```bash
-# 0. Set up Python path
-export PYTHONPATH=/path/to/c_cpp_study/src
+# 0. Install once (skip if already done):  pip install -e .  (from repo root)
+#    No-install alternative:  export PYTHONPATH=/path/to/c_cpp_study/src
 
 # 1. Validate the aggregate function (no C++ needed)
 python -c "

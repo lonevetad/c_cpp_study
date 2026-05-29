@@ -417,3 +417,82 @@ Write a detailed plan for each functionality and for each exercise about their i
 
 Then, update all relevant ".md" files, write a new entry on the "development_history" folder and save your memory.
 
+
+
+
+The "Future Exercise" FE-11 has a mistake: the double-assignment is prevented by querying a second "scattered_database" holding the pairing "tile (its center as key) - node (ID) assigned to it"; that second "scattered_database" is filled as follows:
+- it holds all the tiles assigned to the current node (so, the pairs "each of these tiles' centers ; current node's ID")
+- evert time a tile gets assigned to a node, that node shares that information (i.e., the tuple "tile's center ; that node's ID") to its immediate neighbors, who store the received tuple in their own "scattered_database" (THIS is the "duplication" mentioned earlier). In order to not split the network and to avoid broadcasting the "tile assignment event" to the whole network, a "spawn" is invoked and only that node's neighbors are involved in this "storing process": each other nodes (i.e., all nodes having a "hops distance > 1" from the spawning node) are excluded from the spawned process -> this way, the spawned process involves ONLY the "spawner node" 's neighborhood and no other node. (The whole "storing" operation can be optimized by moving it entirely in the spawned process: "the only the nodes that are strictly inside in the spawned process are the nodes that both have a hops_distance <= 1 and that doesn't have the provided tile's center inside their scattered database"; the second half of the condition impies that a node can be part of the spawned process only once, because successive evaluations of "scattered_database inclusion tests" will fail after the tile's center insertion. (Also, no node can ever stay at the border: it's either part of the spawned process or it's not). ) 
+. the "double-assignment-avoidance query" is performed as describe, i.e. by a query-with-timeout protocol: no reply within `2 × network_diameter`rounds (+ a margin) → tile is unassigned -> an election can be performed to decide which node will have the tile assigned to it (the node having the position closest to the tile's center is the "elected one").
+
+Update the "FUTURE_EXERCISES.md" file, the "EXERCISE_PLAN.md" as well (the instructions above have a higher priority over the existing ones inside the "EXERCISES_PLAN" file upon any contradictory statement; if any contradiction occur, write a highlighted note about that)
+Then, update all other relevant ".md" files, write a new entry on the "development_history" folder and save your memory.
+
+
+
+
+In the file "scattered_database.py", what is the purpose of using the primitive "sp_collection"? What is its definition and usage in the original "FCPP" library?
+Create a ".md" file explaining that inside a new "explanations" folder: I'll use it to learn more.
+
+
+
+
+Why  the file ".fcpp_bridge_cpp/consensus_latest.cpp" is OUTSIDE the "src" folder? It seems very unusual.
+If necessary, check the last 10 prompts and up to 5 last sessions to understand if it was a result of my mistakes.
+Could it be due to an attempt of "manually running an exercise from the command line pointing it from the parent folder of the src directory"?
+
+
+
+Then, update local files under "claude_code" from Your "MEMORY.md" files and all other files the latter refers to.
+
+
+
+
+
+
+I tried the "pip install -e ." command by pointing the Bash shell in the "src" 's parent folder: it got the following error.*
+
+error: externally-managed-environment
+
+× This environment is externally managed
+╰─> To install Python packages system-wide, try apt install
+    python3-xyz, where xyz is the package you are trying to
+    install.
+    
+    If you wish to install a non-Debian-packaged Python package,
+    create a virtual environment using python3 -m venv path/to/venv.
+    Then use path/to/venv/bin/python and path/to/venv/bin/pip. Make
+    sure you have python3-full installed.
+    
+    If you wish to install a non-Debian packaged Python application,
+    it may be easiest to use pipx install xyz, which will manage a
+    virtual environment for you. Make sure you have pipx installed.
+    
+    See /usr/share/doc/python3.12/README.venv for more information.
+
+note: If you believe this is a mistake, please contact your Python installation or OS distribution provider. You can override this, at the risk of breaking your Python installation or OS, by passing --break-system-packages.
+hint: See PEP 668 for the detailed specification.
+
+
+What is missing ? should I activate the Python environment ("venv"?) first?
+
+
+
+
+
+
+
+
+I don't want to use another sub-project "venv", because I want the "fcpp_bridge" to be able to work autonomously (accounting for its dependence of the "fcpp" C++ project underneath,
+
+Could it be a good idea to create an entirely new Git project in a folder adiacent to "this GitHub project" (i.e., "./src/../../fcpp_bridge"), copy all the files under the current "fcpp_bridge" folder into the newly created Git project (which has the very same name: "fcpp_bridge") and, after properly reference the original "fcpp" project, fix all "prerequisites / getting started" steps and path references?
+
+
+
+
+
+Before going with the "Option B", I need to clarify Your open question: the "FCPP C++ library" is a standalone project, made by someone else and with its own license; I already have cloned it inside the folder "/home/cronomatita/Desktop/prog/cpp/c_cpp_study/src/fcpp_py_porting/fcpp_clone_GITIGNORE_ME" (You can verify it by looking for the directory "fcpp" inside it) for training purposes.
+
+So, after assessing that I won't face any licence issues by choosing the "Option B" (create/copy the "fcpp"'s license, or do whatever it's needed to be legally compliant: I guess it's best to copy their "Apache License"), then go with the "Option B".
+
+

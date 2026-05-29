@@ -10,7 +10,7 @@ comments.
 **Run an example** (once compilation pipeline is set up):
 ```bash
 cd <repo-root>
-PYTHONPATH=src python src/fcpp_bridge/examples/<example>.py
+python -m fcpp_bridge.examples.<example>  # after pip install -e . (or prefix PYTHONPATH=src)
 ```
 
 Per-node log files are written to `src/fcpp_bridge/examples/logs/`.
@@ -354,7 +354,7 @@ If interrupted, check the **Status** table above. Find the first ⬜ Pending row
 continue from there. After each file is written, run:
 
 ```bash
-PYTHONPATH=src python -c "import fcpp_bridge.examples.spreading_collection"
+python -c "import fcpp_bridge.examples.spreading_collection"
 ```
 
 (or the relevant module) to verify the import does not crash.

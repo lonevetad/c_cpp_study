@@ -14,8 +14,8 @@ Run an explicit subset of steps:
 Step names: validate  transpile  compile  run
 
 Artifacts written to disk so later steps can be resumed independently:
-    .fcpp_bridge_cpp/consensus_latest.cpp   written by: transpile
-    .fcpp_bridge_build/.latest_binary       written by: compile  (stores path)
+    examples/.fcpp_cpp/consensus_latest.cpp   written by: transpile
+    examples/.fcpp_build/.latest_binary       written by: compile  (stores path)
 """
 import argparse
 import sys
@@ -26,8 +26,8 @@ from fcpp_bridge.transpiler import Transpiler
 from fcpp_bridge.compiler import Compiler
 
 # ── Artifact paths ────────────────────────────────────────────────────────────
-_CPP_DIR    = Path(".fcpp_bridge_cpp")
-_BUILD_DIR  = Path(".fcpp_bridge_build")
+_CPP_DIR    = Path(__file__).parent / ".fcpp_cpp"
+_BUILD_DIR  = Path(__file__).parent / ".fcpp_build"
 _CPP_LATEST = _CPP_DIR / "consensus_latest.cpp"
 _BIN_LATEST = _BUILD_DIR / ".latest_binary"     # stores the binary path as text
 

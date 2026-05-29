@@ -1,5 +1,5 @@
 """
-Smoke tests for all 7 fcpp_bridge example aggregate functions.
+Smoke tests for all fcpp_bridge example aggregate functions.
 
 Each test validates and transpiles one @aggregate_function class.
 No C++ compiler is required — only the Python DSL validator and transpiler.
@@ -51,3 +51,18 @@ def test_worker_role_smoke():
 def test_communication_roles_smoke():
     from fcpp_bridge.examples.communication_roles_assignment import CommunicationRolesAggregate
     _smoke(CommunicationRolesAggregate)
+
+
+def test_scattered_database_smoke():
+    from fcpp_bridge.examples.scattered_database import ScatteredDBAggregate
+    _smoke(ScatteredDBAggregate)
+
+
+def test_area_discovery_smoke():
+    from fcpp_bridge.examples.area_discovery import AreaDiscoveryAggregate
+    _smoke(AreaDiscoveryAggregate)
+
+
+def test_iteratively_area_discovery_smoke():
+    from fcpp_bridge.examples.iteratively_area_discovery import IterAreaDiscoveryAggregate
+    _smoke(IterAreaDiscoveryAggregate)

@@ -5,28 +5,39 @@ Production-ready bridge between Python and FCPP (Field Calculus C++14 framework)
 ## Quick Start
 
 ```bash
+# One-time setup — makes `import fcpp_bridge` work from anywhere (no prefix needed):
 cd <repo-root>
-PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -v
-# 624 pass, 0 fail
+pip install -e .
+
+# Run the test suite:
+src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -v
+# 675 pass, 0 fail
 ```
 
-> **`PYTHONPATH` requirement**: `fcpp_bridge` is not published on PyPI — it lives
-> in `src/fcpp_bridge/` inside this repository.  Python must find the `src/`
-> directory on its module search path before any `import fcpp_bridge` will work.
+> **Installation note**: `fcpp_bridge` is not published on PyPI — it lives in
+> `src/fcpp_bridge/` inside this repository.  The `pyproject.toml` at the repo
+> root makes it installable in **editable mode** with a single command:
 >
 > ```bash
-> # Persistent for the terminal session (run from the repository root):
-> export PYTHONPATH=/path/to/c_cpp_study/src
->
-> # — or — inline prefix for a single command:
-> PYTHONPATH=src python src/fcpp_bridge/examples/worker_role_assignment.py
+> # From the repository root (c_cpp_study/):
+> pip install -e .
 > ```
 >
-> If your working directory is `src/fcpp_bridge/`, the `src/` directory is one
-> level up (`..`):
+> After that, `import fcpp_bridge` works from any directory and no `PYTHONPATH`
+> prefix is ever needed again.
+>
+> **No-install alternative** — prefix every command instead:
 >
 > ```bash
-> PYTHONPATH=.. /usr/bin/python3 examples/worker_role_assignment.py
+> PYTHONPATH=src python -m fcpp_bridge.examples.worker_role_assignment
+> # or: export PYTHONPATH=/path/to/c_cpp_study/src  (persistent for the session)
+> ```
+>
+> **System Python blocked by PEP 668?** (Debian/Ubuntu) — install into a venv:
+>
+> ```bash
+> python -m venv .venv && .venv/bin/pip install -e .
+> source .venv/bin/activate   # then no prefix needed for that terminal session
 > ```
 
 ## Overview
@@ -172,20 +183,22 @@ Run any example (requires C++ compiler + FCPP headers):
 
 ```bash
 cd <repo-root>
-PYTHONPATH=src python src/fcpp_bridge/examples/<example>.py
+python -m fcpp_bridge.examples.<example>          # after pip install -e .
+# — or —
+PYTHONPATH=src python -m fcpp_bridge.examples.<example>   # no-install alternative
 ```
 
 `end_to_end.py` supports per-step execution so you can skip stages you've already run:
 
 ```bash
 # validate + transpile only (no C++ compiler needed)
-PYTHONPATH=src python src/fcpp_bridge/examples/end_to_end.py --steps validate transpile
+python -m fcpp_bridge.examples.end_to_end --steps validate transpile
 
 # resume from compile (loads the C++ artifact written by a prior transpile run)
-PYTHONPATH=src python src/fcpp_bridge/examples/end_to_end.py --from compile
+python -m fcpp_bridge.examples.end_to_end --from compile
 
 # jump straight to the simulation
-PYTHONPATH=src python src/fcpp_bridge/examples/end_to_end.py --steps run --nodes 20
+python -m fcpp_bridge.examples.end_to_end --steps run --nodes 20
 ```
 
 See `TUTORIAL_simple.md §Running individual steps` for the full flag reference.

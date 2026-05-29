@@ -257,7 +257,7 @@ Tests are in `tests/test_visualization.py` (16 tests, no matplotlib required for
 Run:
 
 ```bash
-PYTHONPATH=src pytest src/fcpp_bridge/tests/test_visualization.py -v
+pytest src/fcpp_bridge/tests/test_visualization.py -v  # after pip install -e . (or prefix PYTHONPATH=src)
 ```
 
 ---

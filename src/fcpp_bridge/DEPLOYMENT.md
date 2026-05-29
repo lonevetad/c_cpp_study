@@ -8,6 +8,10 @@ networking, and physical device deployment.
 **Run tests:**
 
 ```bash
+# After pip install -e . (from repo root):
+src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -v
+
+# No-install alternative:
 PYTHONPATH=src src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -v
 ```
 
@@ -249,7 +253,8 @@ an `@aggregate_function` class (transpilable) plus a `_demo_simulate()` function
 (pure Python, no compiler needed). Per-node log files written to `examples/logs/`.
 
 ```bash
-PYTHONPATH=src python src/fcpp_bridge/examples/<name>.py
+python -m fcpp_bridge.examples.<name>          # after pip install -e .
+PYTHONPATH=src python -m fcpp_bridge.examples.<name>   # no-install alternative
 ```
 
 | File                      | C++ source                     | Key primitives                                                     |

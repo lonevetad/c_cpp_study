@@ -1,5 +1,5 @@
 """
-Storage (per-node state) initialization utilities for fcpp_bridge exercises.
+Storage (per-node state) initialization utilities for fcpp_bridge examples.
 
 All setter functions operate on a *storage* mapping of the form
 ``dict[int, dict]`` — node-ID → plain Python dict representing that node's
@@ -42,7 +42,7 @@ import random as _random
 from math import gcd
 from typing import Any, Dict, List, Optional, Tuple
 
-from fcpp_bridge.exercises.ex_utils.position import Positions
+from fcpp_bridge.examples.ex_utils.position import Positions
 
 NodeStorage = Dict[int, Dict[str, Any]]
 
