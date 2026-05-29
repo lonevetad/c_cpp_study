@@ -1,17 +1,20 @@
 ---
 name: project-fcpp-bridge
-description: "fcpp_bridge v1.9 — 672 tests; V1_9_PLAN ALL 6 STEPS COMPLETE (A–F done)"
+description: "fcpp_bridge v1.9 — 675 tests; standalone repo at ../fcpp_bridge/ (flat layout); FCPP_INCLUDE_PATH env var for C++ headers"
 metadata: 
   node_type: memory
   type: project
   originSessionId: e0e1ffd8-f841-4b03-8663-5d988f484735
 ---
 
-Project lives at: `src/fcpp_bridge/`  
-Architecture doc: `src/bridge.md`  
-Run tests: `src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -v` (after `pip install -e .`; or prefix `PYTHONPATH=src`)  
-Venv with pytest: `src/expr_eval_py/expr_eval_py_env/`  
-Editable install: `pyproject.toml` at repo root; `pip install -e .` makes import work without PYTHONPATH.
+**In-development location** (monorepo): `src/fcpp_bridge/`  
+**Standalone repo** (2026-05-29): `/home/cronomatita/Desktop/prog/cpp/fcpp_bridge/` — flat layout, package at `fcpp_bridge/fcpp_bridge/`
+
+Run tests in monorepo: `src/expr_eval_py/expr_eval_py_env/bin/pytest src/fcpp_bridge/tests/ -q` (after `pip install -e .`; or prefix `PYTHONPATH=src`)  
+Run tests in standalone: `pytest fcpp_bridge/tests/ -v` (after `python3 -m venv .venv && pip install -e .`; or `PYTHONPATH=. pytest fcpp_bridge/tests/`)
+
+**FCPP C++ dependency**: set `export FCPP_INCLUDE_PATH=/path/to/fcpp/src` before running examples that compile C++.  
+`compiler_core.py` and `cmake_generator.py` now read this env var (previously had a broken hardcoded path).
 
 ## Phase status (as of 2026-05-28)
 

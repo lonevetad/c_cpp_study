@@ -496,3 +496,44 @@ Before going with the "Option B", I need to clarify Your open question: the "FCP
 So, after assessing that I won't face any licence issues by choosing the "Option B" (create/copy the "fcpp"'s license, or do whatever it's needed to be legally compliant: I guess it's best to copy their "Apache License"), then go with the "Option B".
 
 
+
+
+
+
+After moving the Bash shell into "~/Desktop/prog/cpp/fcpp_bridge", I've tried to run an example. To do so, I opened the README and run all of the initialization steps up to " Running Tests" included: all tests passed.
+Despite exporting the "FCPP_INCLUDE_PATH" (by running the command "export FCPP_INCLUDE_PATH=~/Desktop/prog/cpp/fcpp_bridge/fcpp_original_source"), trying to run the "scattered_database" example fails. In particular, the command "python -m fcpp_bridge.examples.scattered_database" gives the the following output:
+
+======================================================================
+FCPP Bridge — Scattered Database Exercise (FE-9)
+Demonstrates: spawn query routing + old + bis_distance + sp_collection
+======================================================================
+
+[1/3] Validating Python DSL...
+    OK — 0 warning(s)
+
+[2/3] Transpiling to C++...
+    OK — 3148 bytes of C++ generated  (state type: ScatteredDBState)
+
+[3/3] Toolchain run (15 nodes, 60 rounds)...
+    Note: C++ binary starts with empty shards (set_initial_storage pending).
+    Convergence will require more rounds than with pre-populated shards.
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/cronomatita/Desktop/prog/cpp/fcpp_bridge/fcpp_bridge/examples/scattered_database.py", line 378, in <module>
+    main()
+  File "/home/cronomatita/Desktop/prog/cpp/fcpp_bridge/fcpp_bridge/examples/scattered_database.py", line 354, in main
+    ScatteredDBExample().run(NUM_ROUNDS)
+  File "/home/cronomatita/Desktop/prog/cpp/fcpp_bridge/fcpp_bridge/examples/abstract_example.py", line 178, in run
+    binary = compiler.get_or_compile(cpp_code, self.log_prefix)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cronomatita/Desktop/prog/cpp/fcpp_bridge/fcpp_bridge/compiler/compiler_core.py", line 172, in get_or_compile
+    raise CompilationError(
+fcpp_bridge.compiler.compilation_error.CompilationError: Compilation failed: /home/cronomatita/Desktop/prog/cpp/fcpp_bridge/fcpp_bridge/examples/.fcpp_cpp/scattered_db_a2f63f57c09304c0.cpp:1:10: fatal error: fcpp/fcpp.hpp: No such file or directory
+    1 | #include <fcpp/fcpp.hpp>
+      |          ^~~~~~~~~~~~~~~
+compilation terminated.
+
+
+What am I missing / doing wrong? What is missing? Propose the fixes and then ask me if I want to apply them.
+

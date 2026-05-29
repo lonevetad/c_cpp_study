@@ -2,7 +2,7 @@
 
 - [FCPP exercises project state](project_fcpp_exercises.md) — build system, file layout, run command, CMakeLists foreach pattern
 - [FCPP export_list rule](project_fcpp_export_list_rule.md) — must add foo_t to main_t's export_list when foo uses nbr(); common compile error pattern
-- [fcpp_bridge project state](project_fcpp_bridge.md) — v1.9: 675 tests; 10 examples; examples/ex_utils/ done; FE-9/10/11 plan in EXAMPLES_PLAN.md; tutorials updated
+- [fcpp_bridge project state](project_fcpp_bridge.md) — 675 tests; standalone repo at ../fcpp_bridge/ (flat layout); FCPP_INCLUDE_PATH env var; compiler path bug fixed
 - [fcpp_bridge import rule](feedback_fcpp_bridge_imports.md) — use relative/absolute imports in sub-packages; bare names break under PYTHONPATH=src
 - [Clarification style](feedback_clarification_style.md) — ask questions for ambiguous parts; always offer "go autonomous + log decisions" as an option
 - [User review 2026-05-28](feedback_user_review_2026-05-28.md) — positive review; autonomous multi-step approach validated; flag C++ API caveats for manual review
