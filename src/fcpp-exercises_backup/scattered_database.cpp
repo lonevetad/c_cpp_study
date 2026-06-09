@@ -149,6 +149,17 @@ class scattered_db_query/*<false>*/ {
     S& serialize(S& s) const {
         return s << key << requester << created_at_tick << time;
     }
+
+    //! @brief Returns a compact human-readable string representation.
+    std::string to_string() const {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.3g", (double)time);
+        return "db_qry{key=" + std::to_string(key)
+            + " r=" + std::to_string(requester)
+            + " ct=" + std::to_string(created_at_tick)
+            + " ts=" + buf
+            + "}";
+    }
 };
 
 
@@ -197,7 +208,7 @@ struct scattered_db_response {
     static size_t hash(s_db_data data_to_hash){
         constexpr size_t fields_count = 2;
         constexpr size_t offs = sizeof(size_t)*CHAR_BIT/fields_count;
-        return (size_t(fcpp::get<1>(data_to_hash)) << offs) | size_t(fcpp::get<0>(data_to_hash));
+        return (size_t(data_to_hash[1]) << offs) | size_t(data_to_hash[0]);
     }
 
     //! @brief Hash computation.
@@ -223,6 +234,22 @@ struct scattered_db_response {
     template <typename S>
     S& serialize(S& s) const {
         return s << key << data << requester << holder << created_at_tick << time;
+    }
+
+    //! @brief Returns a compact human-readable string representation.
+    std::string to_string() const {
+        char buf[32];
+        auto f3 = [&](double v) -> std::string {
+            std::snprintf(buf, sizeof(buf), "%.3g", v);
+            return buf;
+        };
+        return "db_res{key=" + std::to_string(key)
+            + " d=(" + f3(data[0]) + "," + f3(data[1]) + ")"
+            + " r=" + std::to_string(requester)
+            + " h=" + std::to_string(holder)
+            + " ct=" + std::to_string(created_at_tick)
+            + " ts=" + f3(time)
+            + "}";
     }
 };
 
@@ -291,8 +318,12 @@ namespace tags {
     struct node_scattered_db {};
     struct node_current_tick {};
     struct node_data_requested {}; // turns true only if the request or its response is "travelling" (i.e., after the spawn start and no longer the spawn has ended)
+    struct node_last_requested_data {};
+    struct node_requests_got {};
+    struct node_requests_got_amount {};
     struct node_data_got {};
     struct node_responses_provided {};
+    struct node_responses_provided_str {};
 }
 
 //! @brief The maximum communication range between nodes.
@@ -313,8 +344,8 @@ using spawn_res_query = tuple<
 >;
 using spawn_res_response = scattered_db_response; // just an alias for future developments
 
-// map< returned_thing , key , hash_robe >
-using spawn_res_query_map = std::unordered_map<spawn_res_query, scattered_db_query, common::hash<spawn_res_query> >;
+// map< key , returned_thing , hash >
+using spawn_res_query_map = std::unordered_map<scattered_db_query, spawn_res_query, common::hash<scattered_db_query> >;
 using spawn_res_response_map = std::unordered_map<spawn_res_response, scattered_db_response, common::hash<spawn_res_response> >;
 
 using provided_responses_k = tuple<
@@ -398,7 +429,7 @@ FUN void execute_scattered_db_query(ARGS,
         set_nodes_to_source_t{node.uid}, // set for current node
         set_nodes_to_source_t{}, // set to accumulate into
         // accumulator / aggregator function
-        [](set_nodes_to_source_t& a, set_nodes_to_source_t& b){ a.insert(b.begin(), b.end()); return a; }
+        [](set_nodes_to_source_t a, set_nodes_to_source_t b){ a.insert(b.begin(), b.end()); return a; }
     );
 
     // START THE SPAWN PART
@@ -421,13 +452,23 @@ FUN void execute_scattered_db_query(ARGS,
     // ... run the spawn
     spawn_res_query_map query_res = spawn(CALL, [&](scattered_db_query const& message_query) {
         s_db_key key = message_query.key;
+        bool is_requester = node.uid == message_query.requester;
         bool has_data = node.storage(tags::node_scattered_db{}).count(key) > 0;
-        if(node.uid == message_query.requester){
+        if(is_requester){
             node.storage(tags::node_data_requested{}) = true;
+            node.storage(tags::node_last_requested_data{}) = message_query.to_string(); // message_query;
         }
         // bool inpath = nodes_to_source.count(message_query.from) + nodes_to_source.count(m.to) > 0;
         status s = has_data ? status::terminated_output
                 : status::internal;
+        if(!is_requester){
+            if(has_data){
+                node.storage(tags::node_size{}) = 25;
+                node.storage(tags::node_shape{}) = shape::icosahedron;
+            } else {
+                node.storage(tags::node_size{}) = 20;
+            }
+        }
         return make_tuple(
             static_cast<spawn_res_query>(make_tuple(
                 message_query,
@@ -461,17 +502,24 @@ FUN void execute_scattered_db_query(ARGS,
     */
 
     // reply to all requests received ...
+    uint greatest_requests_got_amount = old(CALL, static_cast<uint>(0), 
+        [&](uint x){
+            return x > static_cast<uint>(query_res.size())
+                ? x
+                : static_cast<uint>(query_res.size());
+        }
+    );
+    node.storage(tags::node_requests_got_amount{}) = greatest_requests_got_amount;
 #if __cplusplus <= 201402L
     // C++14 and older
     for (auto const& kv : query_res) {
         scattered_db_query k = kv.first;
         spawn_res_query    v = kv.second;
-        //const spawn_res_query k = kv.first; // LI HO INVETITI, PERCHé NON SI SA !!!! MALEDETTO COMPILATORE
-        //const scattered_db_query v = kv.second; // LI HO INVETITI, PERCHé NON SI SA !!!! MALEDETTO COMPILATORE
 #else
     // C++17 and earlier
     for (auto const& [k, v] : query_res) {
 #endif
+        node.storage(tags::node_requests_got{})[std::to_string(k.key)] = k.to_string();
         // scattered_db_query k = get<0>(k);
         // (get some data ... from k)
         device_t sender = k.requester;
@@ -496,11 +544,13 @@ FUN void execute_scattered_db_query(ARGS,
                 round_tick,
                 node.current_time()
             );
+
         }
         // ... (save the response, if possible) ...
         bool has_response = ! response_to_send.empty();
         if(has_response){
             node.storage(tags::node_responses_provided{})[key_response_maybe_already_provided] = response_to_send.front();
+            node.storage(tags::node_responses_provided_str{})[std::to_string(requested_key)] = response_to_send.front().to_string();
         }
 
         // THE SPAWN RESPONSE
@@ -511,11 +561,15 @@ FUN void execute_scattered_db_query(ARGS,
                 dist_from_replier,
                 set_nodes_to_source_t{node.uid},
                 set_nodes_to_source_t{},
-                [](set_nodes_to_source_t& a, set_nodes_to_source_t& b){ a.insert(b.begin(), b.end()); return a; }
+                [](set_nodes_to_source_t a, set_nodes_to_source_t b){ a.insert(b.begin(), b.end()); return a; }
             );
+            bool is_requester = node.uid == requester;
             bool in_path = nodes_to_replier.count(the_final_response.holder) + nodes_to_replier.count(requester) > 0;
-            status s = node.uid == requester ? status::terminated_output
+            status s = is_requester ? status::terminated_output
                     : in_path ? status::internal : status::border;
+            if(!is_requester){
+                node.storage(tags::node_shape{}) = in_path ? shape::sphere : shape::cube;
+            }
             return make_tuple(the_final_response, s);
         }, response_to_send);
     
@@ -534,10 +588,14 @@ FUN void execute_scattered_db_query(ARGS,
             device_t requester = v_r.requester;
             s_db_key request_key = v_r.key;
             if(node.uid == requester){
-                node.storage(tags::node_data_got{}) = response_data;
+                // node.storage(tags::node_data_got{}) = response_data;
+                node.storage(tags::node_data_got{})[k_r.to_string()] = response_data;
                 if(node.storage(tags::node_scattered_db{}).count(request_key) == 0){
                     node.storage(tags::node_scattered_db{})[request_key] = response_data;
                 }
+            } else {
+                node.storage(tags::node_last_requested_data{}) = "AM I NOT THE REQUESTER? <" +
+                    std::to_string(node.uid) + " ; " + std::to_string(requester) + ">";
             }
         }
     }
@@ -545,10 +603,12 @@ FUN void execute_scattered_db_query(ARGS,
 FUN_EXPORT execute_scattered_db_query_t = export_list<
     // get_parent_spanning_tree_t,
     real_t,
+    uint,
     set_nodes_to_source_t,
     sp_collection_t<real_t, set_nodes_to_source_t>, 
     device_t,
-    spawn_t<spawn_res_query, status>,
+    abf_distance_t,
+    spawn_t<scattered_db_query, status>,
     spawn_t<spawn_res_response, status>
 >;
 
@@ -593,22 +653,28 @@ MAIN() {
     */
     bool is_enabled_to_request = is_node_enabled_to_request_data(CALL);
 
+
+    // usage of node physics
+    //node.velocity() = -node.position()/communication_range;
+
+    auto constexpr maximum_db_size = 15.0f;
+    // usage of node storage
+    node.storage(node_size{}) = is_enabled_to_request ? 30 : 10;
+    auto constexpr hue_scale = 360.0f / maximum_db_size; // option::node_num;
+    node.storage(node_color{}) = //
+        color::hsva( static_cast<real_t>(node.storage(node_scattered_db{}).size()) * hue_scale, 1, 1);
+
+    if(is_enabled_to_request){
+        node.storage(node_shape{}) = shape::star; // is_enabled_to_request ? shape::star : shape::sphere; // icosahedron
+    }
+
+    // DO THE THING
+
     execute_scattered_db_query(CALL,
         round_tick,
         is_enabled_to_request
     );
 
-
-    // usage of node physics
-    //node.velocity() = -node.position()/communication_range;
-
-    // usage of node storage
-    node.storage(node_size{}) = is_enabled_to_request ? 20 : 10;
-    auto const hue_scale = 360.0f / 5; // option::node_num;
-    node.storage(node_color{}) = //
-        color::hsva( static_cast<real_t>(node.storage(node_scattered_db{}).size()) * hue_scale, 1, 1);
-
-    node.storage(node_shape{}) = is_enabled_to_request ? shape::star : shape::sphere; // icosahedron
         
 }
     
@@ -656,9 +722,13 @@ using store_t = tuple_store<
     , node_scattered_db,        coordination::scattered_db_complex_t // vector_coprime_IDs_t
 
     , node_data_requested,      bool
+    , node_last_requested_data, std::string // scattered_db_query
     , node_current_tick,        uint
-    , node_data_got,            s_db_data
-    , node_responses_provided,  coordination::responses_provided_t
+    , node_requests_got,        std::map<std::string, std::string>
+    , node_requests_got_amount, uint
+    , node_data_got,            std::map<std::string, s_db_data> // s_db_data
+    , node_responses_provided,  coordination::responses_provided_t 
+    , node_responses_provided_str, std::map<std::string, std::string> 
 >;
 //! @brief The tags and corresponding aggregators to be logged (change as needed).
 using aggregator_t = aggregators<

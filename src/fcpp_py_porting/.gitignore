@@ -11,6 +11,8 @@ __pycache__/
 
 fcpp_clone_*/
 fcpp_clone_GITIGNORE_ME/
+fcpp-exercises
+fcpp-exercises/
 bin/
 bin/*
 */bin/

@@ -384,6 +384,33 @@ The wave contracts naturally: once no neighbour propagates K and the node itself
 `spawn` returns `std::unordered_map<K, R, common::hash<K>>`.
 `R` is the first element of the `tuple<R, B>` that `process` returns.
 
+### Map type layout — common mistake
+
+The returned map is always `unordered_map<KeyType, ValueType>`:
+
+```cpp
+using result_map = std::unordered_map<K, R, common::hash<K>>;
+//                                    ^KEY  ^VALUE (body return, minus status)
+```
+
+**K** is the key-set element type (the type passed as the last argument to `spawn`).  
+**R** is what the body returns (the first element of `tuple<R, B>`).
+
+> **Pitfall:** inverting K and R in the `using` alias is the most common beginner mistake.
+> The compiler error is: `conversion from unordered_map<K,R,...> to unordered_map<R,K,...>`.
+> The body lambda always returns `tuple<VALUE, STATUS>` — but `spawn` maps KEY → VALUE,
+> not VALUE → KEY.
+
+```cpp
+// Wrong — key and value swapped:
+using my_map = std::unordered_map<SpawnReturnType, KeyType, common::hash<SpawnReturnType>>;
+
+// Correct:
+using my_map = std::unordered_map<KeyType, SpawnReturnType, common::hash<KeyType>>;
+```
+
+---
+
 ### What ends up in the map — and why it differs by status type
 
 This is a source of subtle bugs: the three overloads behave differently.

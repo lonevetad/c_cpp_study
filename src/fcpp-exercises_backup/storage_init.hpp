@@ -40,20 +40,19 @@ namespace fcpp {
 
 
 
-    template <typename node_t, typename F>
-    auto new_coprime_nbr_data(node_t const& node, trace_t call_point, F value_fn)
+    template <
+        typename node_t,
+        typename G,
 #if __cplusplus <= 201402L
-        -> std::map<device_t, std::result_of<F>>
+        typename T = typename std::result_of<G(node_t&)>::type,
 #else
-        -> std::map<device_t, std::invoke_result<F>>
+        typename T = std::invoke_result_t<G, node_t&>,
 #endif
+        typename = common::if_signature<G, T(node_t&)>
+    >
+    std::map<device_t, T> new_coprime_nbr_data(node_t& node, trace_t call_point, G value_fn)
     {
-#if __cplusplus <= 201402L
-        using V = std::result_of<F>;
-#else
-        using V = std::invoke_result<F>;
-#endif
-        std::map<device_t, V> result;
+        std::map<device_t, T> result;
         for_each_nbr(node, call_point, [&](device_t nbr_id) -> common::unit {
             if (is_coprime(nbr_id, node.uid))
                 result.emplace(nbr_id, value_fn(node));
