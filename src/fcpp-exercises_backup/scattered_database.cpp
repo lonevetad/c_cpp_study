@@ -378,14 +378,31 @@ FUN bool is_there_need_to_request_data(ARGS, uint current_tick){
 }
 
 
-
-FUN s_db_key compute_key_query(ARGS){
-    auto md_id = (node.uid + 1);  // un nodo a caso ...
-    if(md_id >= static_cast<s_db_key>(option::node_num)){ // module operator, but shorter
-        md_id = 0;
+using update_key_data = tuple<
+    uint, // the actual delta
+    uint  // tick of last update (to avoid increments greater than 1)
+>;
+FUN s_db_key compute_key_query(ARGS, uint round_tick, bool can_fire_request_data){
+    update_key_data delta_data = old(CALL, 
+        static_cast<update_key_data>(make_tuple(0, 0)),
+        [&](update_key_data const& old_update_data){
+            if(can_fire_request_data &&
+                (round_tick != get<1>(old_update_data))
+            ){
+                // an actual update may happen
+                return static_cast<update_key_data>(make_tuple(get<0>(old_update_data) +1, round_tick));
+            }
+            return old_update_data;
+        }
+    );
+    uint delta = get<0>(delta_data);
+    auto md_id = (node.uid + delta);  // un nodo a caso ...
+    while(md_id >= static_cast<s_db_key>(option::node_num)){ // module operator, but shorter
+        md_id -= static_cast<s_db_key>(option::node_num);
     }
     return md_id;
 }
+FUN_EXPORT compute_key_query_t = export_list<update_key_data>;
 
 /*
 AGGREGATE FUNCTIONS
@@ -438,10 +455,12 @@ FUN void execute_scattered_db_query(ARGS,
     
     // ... define the query
     common::option<scattered_db_query> query; // starts by "absent / nullptr-containing". filled if a "spawn-process" needs to spawn
-    if(is_there_need_to_request_data(CALL, round_tick)) {
+    bool can_fire_request_data = is_there_need_to_request_data(CALL, round_tick);
+    s_db_key next_key_request = compute_key_query(CALL, round_tick, can_fire_request_data);
+    if(can_fire_request_data) {
         //const bool allow_multiple_queries = false;
         query.emplace(
-            compute_key_query(CALL), // key
+            next_key_request, // key
             node.uid, // requester
             round_tick, //
             node.current_time() //
@@ -494,15 +513,8 @@ FUN void execute_scattered_db_query(ARGS,
     */
 
     common::option<scattered_db_response> reply;
-    //if(query_res.size() > 0)
-
-    /**
-    1) USARE IL "map-to-field" e poi ITERARE SUL FIELD 
-    2) PER FARE TAAAAAANTI SPAWN E RIMANDARE LA RESPONSE
-    */
-
     // reply to all requests received ...
-    uint greatest_requests_got_amount = old(CALL, static_cast<uint>(0), 
+    uint greatest_requests_got_amount = old(CALL, static_cast<uint>(0),
         [&](uint x){
             return x > static_cast<uint>(query_res.size())
                 ? x
@@ -510,98 +522,96 @@ FUN void execute_scattered_db_query(ARGS,
         }
     );
     node.storage(tags::node_requests_got_amount{}) = greatest_requests_got_amount;
+
+    // PHASE A — pure logic, no FCPP primitives.
+    // Iterate query_res to decide which responses to inject; collect them into a vector.
+    // Calling spawn inside this loop would be wrong: nodes with 0 entries would call it
+    // 0 times while nodes with N entries call it N times, breaking trace synchronization.
+    std::vector<scattered_db_response> responses_to_inject;
 #if __cplusplus <= 201402L
     // C++14 and older
     for (auto const& kv : query_res) {
         scattered_db_query k = kv.first;
         spawn_res_query    v = kv.second;
 #else
-    // C++17 and earlier
+    // C++17 and newer
     for (auto const& [k, v] : query_res) {
 #endif
         node.storage(tags::node_requests_got{})[std::to_string(k.key)] = k.to_string();
-        // scattered_db_query k = get<0>(k);
-        // (get some data ... from k)
-        device_t sender = k.requester;
-        s_db_key requested_key = k.key;
+        device_t sender          = k.requester;
+        s_db_key requested_key   = k.key;
         uint response_created_at = ALLOW_MULTIPLE_QUERIES ? round_tick : 0;
-        // (... and from v)
-        bool has_data = get<1>(v);
-        s_db_data actual_data = get<2>(v);
+        bool has_data            = get<1>(v);
+        s_db_data actual_data    = get<2>(v);
 
-        provided_responses_k key_response_maybe_already_provided = make_tuple(sender, requested_key, response_created_at);
-        common::option<scattered_db_response> response_to_send;
-        if(
-            has_data &&
-            // ... but ONLY ONCE!
-            (node.storage(tags::node_responses_provided{}).count(key_response_maybe_already_provided) == 0)
-            ){
-            response_to_send.emplace(
-                requested_key,
-                actual_data,
-                sender,   // requester
-                node.uid, // holder
-                round_tick,
-                node.current_time()
-            );
+        provided_responses_k key_already = make_tuple(sender, requested_key, response_created_at);
+        if (has_data &&
+            node.storage(tags::node_responses_provided{}).count(key_already) == 0) {
 
+            scattered_db_response resp(requested_key, actual_data,
+                                       sender, node.uid, round_tick, node.current_time());
+            node.storage(tags::node_responses_provided{})[key_already] = resp;
+            node.storage(tags::node_responses_provided_str{})[std::to_string(requested_key)] = resp.to_string();
+            responses_to_inject.push_back(resp);
         }
-        // ... (save the response, if possible) ...
-        bool has_response = ! response_to_send.empty();
-        if(has_response){
-            node.storage(tags::node_responses_provided{})[key_response_maybe_already_provided] = response_to_send.front();
-            node.storage(tags::node_responses_provided_str{})[std::to_string(requested_key)] = response_to_send.front().to_string();
+    }
+
+    // PHASE B — single spawn call, outside any loop.
+    // Every node reaches this point exactly once per round regardless of query_res size,
+    // keeping the CALL trace counter synchronized across the network.
+    // Each entry in responses_to_inject starts a separate spawn process.
+    spawn_res_response_map response_res = spawn(CALL, [&](scattered_db_response const& the_final_response) {
+        device_t requester = the_final_response.requester;
+        bool is_requester = node.uid == requester;
+        /*
+        real_t dist_from_replier = abf_distance(CALL, node.uid == requester);
+        set_nodes_to_source_t nodes_to_replier = sp_collection(CALL,
+            dist_from_replier,
+            set_nodes_to_source_t{node.uid},
+            set_nodes_to_source_t{},
+            [](set_nodes_to_source_t a, set_nodes_to_source_t b){ a.insert(b.begin(), b.end()); return a; }
+        );
+        */
+        bool in_path = nodes_to_source.count(the_final_response.holder) // nodes_to_replier
+            +
+            nodes_to_source.count(requester) // nodes_to_replier
+            > 0;
+        status s = is_requester ? status::terminated_output
+                : in_path ? status::internal : status::border;
+        if (!is_requester) {
+            node.storage(tags::node_shape{}) = in_path ? shape::sphere : shape::cube;
         }
+        return make_tuple(the_final_response, s);
+    }, responses_to_inject);
 
-        // THE SPAWN RESPONSE
-        spawn_res_response_map response_res = spawn(CALL, [&](scattered_db_response const& the_final_response) {
-            device_t requester = the_final_response.requester;
-            real_t dist_from_replier = abf_distance(CALL, node.uid == requester);
-            set_nodes_to_source_t nodes_to_replier = sp_collection(CALL,
-                dist_from_replier,
-                set_nodes_to_source_t{node.uid},
-                set_nodes_to_source_t{},
-                [](set_nodes_to_source_t a, set_nodes_to_source_t b){ a.insert(b.begin(), b.end()); return a; }
-            );
-            bool is_requester = node.uid == requester;
-            bool in_path = nodes_to_replier.count(the_final_response.holder) + nodes_to_replier.count(requester) > 0;
-            status s = is_requester ? status::terminated_output
-                    : in_path ? status::internal : status::border;
-            if(!is_requester){
-                node.storage(tags::node_shape{}) = in_path ? shape::sphere : shape::cube;
-            }
-            return make_tuple(the_final_response, s);
-        }, response_to_send);
-    
-        // consume the response
-
+    // PHASE C — consume responses, pure logic, no FCPP primitives.
 #if __cplusplus <= 201402L
-        // C++14 and older
-        for (auto const& kv : response_res) {
-            auto k_r = kv.first;
-            auto v_r = kv.second;
+    // C++14 and older
+    for (auto const& kv : response_res) {
+        auto k_r = kv.first;
+        auto v_r = kv.second;
 #else
-        // C++17 and earlier
-        for (auto const& [k_r, v_r] : response_res) {
+    // C++17 and newer
+    for (auto const& [k_r, v_r] : response_res) {
 #endif
-            s_db_data response_data = v_r.data;
-            device_t requester = v_r.requester;
-            s_db_key request_key = v_r.key;
-            if(node.uid == requester){
-                // node.storage(tags::node_data_got{}) = response_data;
-                node.storage(tags::node_data_got{})[k_r.to_string()] = response_data;
-                if(node.storage(tags::node_scattered_db{}).count(request_key) == 0){
-                    node.storage(tags::node_scattered_db{})[request_key] = response_data;
-                }
-            } else {
-                node.storage(tags::node_last_requested_data{}) = "AM I NOT THE REQUESTER? <" +
-                    std::to_string(node.uid) + " ; " + std::to_string(requester) + ">";
+        s_db_data response_data = v_r.data;
+        device_t requester      = v_r.requester;
+        s_db_key request_key    = v_r.key;
+        if (node.uid == requester) {
+            node.storage(tags::node_data_got{})[k_r.to_string()] = response_data;
+            if (node.storage(tags::node_scattered_db{}).count(request_key) == 0) {
+                node.storage(tags::node_scattered_db{})[request_key] = response_data;
             }
+            node.storage(tags::node_data_requested{}) = false;
+        } else {
+            node.storage(tags::node_last_requested_data{}) = "AM I NOT THE REQUESTER? <" +
+                std::to_string(node.uid) + " ; " + std::to_string(requester) + ">";
         }
     }
 }
 FUN_EXPORT execute_scattered_db_query_t = export_list<
     // get_parent_spanning_tree_t,
+    compute_key_query_t,
     real_t,
     uint,
     set_nodes_to_source_t,
@@ -666,6 +676,8 @@ MAIN() {
 
     if(is_enabled_to_request){
         node.storage(node_shape{}) = shape::star; // is_enabled_to_request ? shape::star : shape::sphere; // icosahedron
+    } else {
+        node.storage(node_shape{}) = shape::tetrahedron;
     }
 
     // DO THE THING
